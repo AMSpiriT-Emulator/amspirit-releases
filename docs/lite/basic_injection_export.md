@@ -1,7 +1,5 @@
 # AMSpiriT-Lite — BASIC Injection and Export
 
-Files: `amspirit-helpers/inc/amspirit_basic.h`, `amspirit-helpers/src/amspirit_basic.cpp`
-
 ## Overview
 
 AMSpiriT provides two-way BASIC program handling:
@@ -347,7 +345,7 @@ Some edge cases in detokenization:
 ```basic
 10 CLS
 20 PRINT "HELLO, WORLD!"
-30 END
+30 GOTO 20
 ```
 
 ### Simple Calculator
@@ -369,16 +367,10 @@ Some edge cases in detokenization:
 ### Graphics Test
 
 ```basic
-10 MODE 1
-20 BORDER 0
-30 INK 0,0:INK 1,26:INK 2,1:INK 3,20
-40 FILL 1,1,1
-50 CIRCLE 80,100,50
-60 PLOT 200,100
-70 DRAW 300,200
-80 LOCATE 1,20
-90 PRINT "Graphics test complete"
-100 END
+1 MODE 1
+2 OUT &BC00,1:OUT &BD00,39
+3 OUT &BC00,6:OUT &BD00,24
+4 WHILE 1: ? chr$(200+RND(1));:WEND
 ```
 
 ---
