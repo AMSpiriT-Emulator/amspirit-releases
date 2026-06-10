@@ -36,7 +36,7 @@ Releases are published as GitHub Releases. Each release includes binaries for al
 
 | Platform | Architecture | Frontend | Package |
 |---|---|---|---|
-| Windows | x86_64 | AMSpiriT (original) | Installer `.exe` |
+| Windows | x86_64 | AMSpiriT (original) | `.zip` |
 | Windows | x86_64 | AMSpiriT Lite — SDL2 | `.zip` |
 | Windows | x86_64 | AMSpiriT Lite — Qt | `.zip` |
 | Linux | x86_64 | AMSpiriT Lite — SDL2 + Qt | AppImage / Flatpak |
@@ -47,7 +47,7 @@ Releases are published as GitHub Releases. Each release includes binaries for al
 
 ### Download
 
-Go to the [**Releases**](../../releases) tab and pick the latest version. Each release page lists all available packages with checksums.
+Go to the [**Releases**] tab and pick the latest version. Each release page lists all available packages with checksums.
 
 ---
 
@@ -80,37 +80,6 @@ flatpak run org.amspirit.AMSpiriTLite
 ### macOS
 
 Open the `.dmg`, drag *AMSpiriT Lite* to your Applications folder, and launch it. On first launch, macOS may require you to approve the app in **System Settings → Privacy & Security**.
-
----
-
-## ROMs
-
-The Amstrad CPC ROMs (OS + BASIC) are **not included** for copyright reasons. You need to supply your own. Legal ROM sets can be obtained from [www.amstrad.com](https://www.amstrad.com/pcw/rom/amsdos.htm) (Amstrad has given permission for personal use) or extracted from a real machine.
-
-Place them in a directory and point the emulator to it:
-
-```bash
-amspirit-lite-sdl -R /path/to/roms/
-```
-
-Expected filenames vary by model; see the [user documentation](docs/) for details.
-
----
-
-## Documentation
-
-| Document | Description |
-|---|---|
-| [Help (English)](docs/amspirit-lite-help-en.html) | General user guide — keyboard shortcuts, loading media, settings |
-| [Help (Français)](docs/amspirit-lite-help-fr.html) | Guide utilisateur en français |
-| [Help (Español)](docs/amspirit-lite-help-es.html) | Guía de usuario en español |
-| [Help (Deutsch)](docs/amspirit-lite-help-de.html) | Benutzerhandbuch auf Deutsch |
-| [Keyboard configuration](docs/keyboard_config.md) | Custom keyboard layouts, hotkeys, `keymap.cfg` format |
-| [Scripting (Lua/CSL)](docs/scripting.md) | Automation, regression testing, screen capture |
-| [Web/REST API](docs/web_server_api.md) | Embedded HTTP debug server reference |
-| [BASIC injection & export](docs/basic_injection_export.md) | Inject or dump Locomotive BASIC programs |
-| [Snapshot slots](docs/snapshot_slots.md) | Quick-save / quick-load with gamepad support |
-| [Changelog](docs/Changelog) | Full version history |
 
 ---
 
