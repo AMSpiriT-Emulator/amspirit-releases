@@ -129,3 +129,26 @@ Drag and drop any supported file onto the emulator window to load it instantly.
 Files changes are detected, and automatically reloaded. Great for developers. You can edit your bas file in an external editor and update it automatically when you save it on disk! Easy!
 
 The Amstrad CPC ROMs are the property of Amstrad plc, redistributed with permission for personal use only.
+
+
+---
+
+
+# Development Team
+
+**AMSpiriT Original** version (Windows) and Core was written by Dmanu78 with Technical supervision by Longshot, and some support by Siko
+**AMSpirit Lite** was developed by Siko, Mac Port and VSCode plugins by Gurneyh
+**Basic Tokenizer** written by Tronic
+**Test Team**: Tronic, Fred/Fugitif, LordHeavy, Ricolaoz
+
+# Acknowledgments
+
+AMSpiriT would never have reached its current accuracy level without the extraordinary documentation work of Longshot/Logon System, author of the "CRTC compendium", and the "Shaker" tool, invaluable sources of verified, tested, proven information. 
+
+Thanks to Made and Ced for their illustrations and Logos.
+
+Thanks also to AMSpiriT's discord members, and members of FORUM.SYSTEM-CFG forum  for their support.
+
+
+
+
