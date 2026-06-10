@@ -1,0 +1,617 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AMSpiriT Web Server — Endpoint Tests</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:#1a1a1a;color:#ccc;font:13px/1.5 'Courier New',monospace;padding:16px}
+h1{color:#6af;font-size:1.1em;margin-bottom:4px}
+.subtitle{color:#666;font-size:.85em;margin-bottom:16px}
+h2{color:#89b;font-size:.75em;text-transform:uppercase;letter-spacing:1px;
+   border-bottom:1px solid #333;padding-bottom:2px;margin:18px 0 8px}
+.endpoint{background:#222;border:1px solid #333;border-radius:3px;padding:10px;margin-bottom:8px}
+.req-line{display:flex;align-items:baseline;gap:8px;margin-bottom:6px}
+.method{font-weight:bold;min-width:52px;font-size:.85em}
+.GET   .method{color:#4c8}
+.POST  .method{color:#fa8}
+.DELETE .method{color:#f66}
+.url{color:#adf;font-size:.85em}
+.body-preview{color:#888;font-size:.8em;margin-bottom:6px;white-space:pre;word-break:break-all}
+.controls{display:flex;gap:6px;align-items:center;margin-bottom:6px}
+button{background:#2a3a5a;color:#c0d0f0;border:1px solid #3a4a6a;
+       padding:3px 12px;border-radius:2px;cursor:pointer;font:inherit;font-size:.85em}
+button:hover{background:#3a4a6a}
+button:active{background:#4a5a7a}
+.resp{background:#111;border:1px solid #2a2a2a;border-radius:2px;padding:6px 8px;
+      font-size:.8em;white-space:pre-wrap;word-break:break-all;max-height:160px;overflow-y:auto;
+      color:#999;min-height:24px}
+.resp.ok   {border-color:#2a4a2a;color:#8c8}
+.resp.err  {border-color:#4a2a2a;color:#c88}
+.resp.wait {border-color:#4a3a1a;color:#ca8}
+.status-badge{font-size:.75em;padding:1px 6px;border-radius:2px;margin-left:4px}
+.s200{background:#1a3a1a;color:#6c6}
+.s4xx{background:#3a1a1a;color:#c66}
+.s5xx{background:#3a2a1a;color:#c96}
+.param-row{display:flex;gap:6px;align-items:center;margin-bottom:5px;flex-wrap:wrap}
+.param-row label{color:#777;font-size:.8em;min-width:60px}
+.param-row input,
+.param-row select,
+.param-row textarea{background:#181818;color:#ccc;border:1px solid #3a3a3a;border-radius:2px;
+                     padding:2px 6px;font:inherit;font-size:.8em}
+textarea{resize:vertical;min-height:48px;width:100%}
+</style>
+</head>
+<body>
+<h1>AMSpiriT — Web Server Endpoint Tests</h1>
+<p class="subtitle">Each section issues one real HTTP request to 127.0.0.1:8765 and shows the raw response.</p>
+
+<!-- ======================= GET ENDPOINTS ======================= -->
+<h2>GET Endpoints</h2>
+
+<!-- /api/ping -->
+<div class="endpoint GET">
+  <div class="req-line">
+    <span class="method">GET</span>
+    <span class="url">/api/ping</span>
+  </div>
+  <div class="body-preview">Connection probe + emulator status (fps, paused, cpc_model, crtc_type). Used by the UI for the connection overlay.</div>
+  <div class="controls">
+    <button onclick="runGet('/api/ping','resp-ping')">Send</button>
+    <span id="badge-ping"></span>
+  </div>
+  <div class="resp" id="resp-ping">—</div>
+</div>
+
+<!-- /api/z80 -->
+<div class="endpoint GET">
+  <div class="req-line">
+    <span class="method">GET</span>
+    <span class="url">/api/z80</span>
+  </div>
+  <div class="body-preview">Z80 registers snapshot (PC, SP, AF/BC/DE/HL + alternates, IX, IY, I, R, IFF1/2, IM)</div>
+  <div class="controls">
+    <button onclick="runGet('/api/z80','resp-z80')">Send</button>
+    <span id="badge-z80"></span>
+  </div>
+  <div class="resp" id="resp-z80">—</div>
+</div>
+
+<!-- /api/ga -->
+<div class="endpoint GET">
+  <div class="req-line">
+    <span class="method">GET</span>
+    <span class="url">/api/ga</span>
+  </div>
+  <div class="body-preview">Gate Array state (video mode, border, HBL/VBL, ink palette)</div>
+  <div class="controls">
+    <button onclick="runGet('/api/ga','resp-ga')">Send</button>
+    <span id="badge-ga"></span>
+  </div>
+  <div class="resp" id="resp-ga">—</div>
+</div>
+
+<!-- /api/psg -->
+<div class="endpoint GET">
+  <div class="req-line">
+    <span class="method">GET</span>
+    <span class="url">/api/psg</span>
+  </div>
+  <div class="body-preview">PSG AY-3-8912 state (tone periods, volumes, mixer, noise, envelope)</div>
+  <div class="controls">
+    <button onclick="runGet('/api/psg','resp-psg')">Send</button>
+    <span id="badge-psg"></span>
+  </div>
+  <div class="resp" id="resp-psg">—</div>
+</div>
+
+<!-- /api/fdc -->
+<div class="endpoint GET">
+  <div class="req-line">
+    <span class="method">GET</span>
+    <span class="url">/api/fdc</span>
+  </div>
+  <div class="body-preview">FDC PD765 state (MSR, SR0–SR2, motor, active drive)</div>
+  <div class="controls">
+    <button onclick="runGet('/api/fdc','resp-fdc')">Send</button>
+    <span id="badge-fdc"></span>
+  </div>
+  <div class="resp" id="resp-fdc">—</div>
+</div>
+
+<!-- /api/state -->
+<div class="endpoint GET">
+  <div class="req-line">
+    <span class="method">GET</span>
+    <span class="url">/api/state</span>
+  </div>
+  <div class="body-preview">Combined snapshot: z80 + ga + psg + fdc + emu (backward-compat aggregate of the sub-endpoints above)</div>
+  <div class="controls">
+    <button onclick="runGet('/api/state','resp-state')">Send</button>
+    <span id="badge-state"></span>
+  </div>
+  <div class="resp" id="resp-state">—</div>
+</div>
+
+<!-- /api/config -->
+<div class="endpoint GET">
+  <div class="req-line">
+    <span class="method">GET</span>
+    <span class="url">/api/config</span>
+  </div>
+  <div class="body-preview">Current CORE_PARAM_IN values (CPC model, CRTC type, ROM lang…)</div>
+  <div class="controls">
+    <button onclick="runGet('/api/config','resp-config-get')">Send</button>
+    <span id="badge-config-get"></span>
+  </div>
+  <div class="resp" id="resp-config-get">—</div>
+</div>
+
+<!-- /api/ram GET -->
+<div class="endpoint GET">
+  <div class="req-line">
+    <span class="method">GET</span>
+    <span class="url">/api/ram?addr=…&amp;len=…&amp;bank=…</span>
+  </div>
+  <div class="body-preview">Hex dump of CPC RAM. bank=0 = central RAM, bank=1..N = extended page N-1</div>
+  <div class="param-row">
+    <label>addr</label><input id="ram-addr" value="0" size="6">
+    <label>len</label><input id="ram-len" value="64" size="6">
+    <label>bank</label><input id="ram-bank" value="0" size="4">
+  </div>
+  <div class="controls">
+    <button onclick="runRamGet()">Send</button>
+    <span id="badge-ram-get"></span>
+  </div>
+  <div class="resp" id="resp-ram-get">—</div>
+</div>
+
+<!-- /api/script GET -->
+<div class="endpoint GET">
+  <div class="req-line">
+    <span class="method">GET</span>
+    <span class="url">/api/script</span>
+  </div>
+  <div class="body-preview">Script running status + last error message</div>
+  <div class="controls">
+    <button onclick="runGet('/api/script','resp-script-get')">Send</button>
+    <span id="badge-script-get"></span>
+  </div>
+  <div class="resp" id="resp-script-get">—</div>
+</div>
+
+<!-- /api/lang GET -->
+<div class="endpoint GET">
+  <div class="req-line">
+    <span class="method">GET</span>
+    <span class="url">/api/lang</span>
+  </div>
+  <div class="body-preview">Current UI language {"lang":"en"|"fr"|"es"|"de"}</div>
+  <div class="controls">
+    <button onclick="runGet('/api/lang','resp-lang-get')">Send</button>
+    <span id="badge-lang-get"></span>
+  </div>
+  <div class="resp" id="resp-lang-get">—</div>
+</div>
+
+<!-- /api/keymap GET -->
+<div class="endpoint GET">
+  <div class="req-line">
+    <span class="method">GET</span>
+    <span class="url">/api/keymap</span>
+  </div>
+  <div class="body-preview">Full key mapping table (keycode → CPC virtual key)</div>
+  <div class="controls">
+    <button onclick="runGet('/api/keymap','resp-keymap-get')">Send</button>
+    <span id="badge-keymap-get"></span>
+  </div>
+  <div class="resp" id="resp-keymap-get">—</div>
+</div>
+
+<!-- /api/basic_state GET -->
+<div class="endpoint GET">
+  <div class="req-line">
+    <span class="method">GET</span>
+    <span class="url">/api/basic_state</span>
+  </div>
+  <div class="body-preview">BASIC interpreter state (current line, variables…)</div>
+  <div class="controls">
+    <button onclick="runGet('/api/basic_state','resp-basic-state')">Send</button>
+    <span id="badge-basic-state"></span>
+  </div>
+  <div class="resp" id="resp-basic-state">—</div>
+</div>
+
+<!-- /api/basic_export GET -->
+<div class="endpoint GET">
+  <div class="req-line">
+    <span class="method">GET</span>
+    <span class="url">/api/basic_export?verbose=…</span>
+  </div>
+  <div class="body-preview">BASIC source detokenised from RAM (text/plain). verbose=1 adds token annotations.</div>
+  <div class="param-row">
+    <label>verbose</label>
+    <select id="basic-verbose">
+      <option value="0">0 (off)</option>
+      <option value="1">1 (on)</option>
+    </select>
+  </div>
+  <div class="controls">
+    <button onclick="runBasicExport()">Send</button>
+    <span id="badge-basic-export"></span>
+  </div>
+  <div class="resp" id="resp-basic-export">—</div>
+</div>
+
+<!-- ======================= POST ENDPOINTS ======================= -->
+<h2>POST Endpoints</h2>
+
+<!-- /api/config POST -->
+<div class="endpoint POST">
+  <div class="req-line">
+    <span class="method">POST</span>
+    <span class="url">/api/config</span>
+  </div>
+  <div class="body-preview">Queue a config change. Fields: cpc_model, crtc_type, rom_lang, paused, do_soft_reset, do_hard_reset</div>
+  <div class="param-row">
+    <label>JSON body</label>
+    <textarea id="config-body">{"paused":true}</textarea>
+  </div>
+  <div class="controls">
+    <button onclick="runPost('/api/config','config-body','resp-config-post')">Send</button>
+    <span id="badge-config-post"></span>
+  </div>
+  <div class="resp" id="resp-config-post">—</div>
+</div>
+
+<!-- /api/keytype POST -->
+<div class="endpoint POST">
+  <div class="req-line">
+    <span class="method">POST</span>
+    <span class="url">/api/keytype</span>
+  </div>
+  <div class="body-preview">Queue a string for autotype (injected as key events on the CPC)</div>
+  <div class="param-row">
+    <label>text</label>
+    <input id="keytype-text" value='PRINT "Hello"' style="width:220px">
+  </div>
+  <div class="controls">
+    <button onclick="runPostJSON('/api/keytype',{text:document.getElementById('keytype-text').value},'resp-keytype')">Send</button>
+    <span id="badge-keytype"></span>
+  </div>
+  <div class="resp" id="resp-keytype">—</div>
+</div>
+
+<!-- /api/keypress POST -->
+<div class="endpoint POST">
+  <div class="req-line">
+    <span class="method">POST</span>
+    <span class="url">/api/keypress</span>
+  </div>
+  <div class="body-preview">Press a single CPC virtual key by VK number (0x00–0xFF, see CORE_rVK_* constants)</div>
+  <div class="param-row">
+    <label>vk (hex)</label>
+    <input id="keypress-vk" value="0x0D" size="8" placeholder="0x0D = Enter">
+  </div>
+  <div class="controls">
+    <button onclick="runPostJSON('/api/keypress',{vk:parseInt(document.getElementById('keypress-vk').value,16)},'resp-keypress')">Send</button>
+    <span id="badge-keypress"></span>
+  </div>
+  <div class="resp" id="resp-keypress">—</div>
+</div>
+
+<!-- /api/ram POST -->
+<div class="endpoint POST">
+  <div class="req-line">
+    <span class="method">POST</span>
+    <span class="url">/api/ram</span>
+  </div>
+  <div class="body-preview">Write bytes to CPC RAM. data = hex string. exec=true → also set PC to entry.</div>
+  <div class="param-row">
+    <label>addr</label><input id="ram-write-addr" value="32768" size="8">
+    <label>data (hex)</label><input id="ram-write-data" value="3E 0A D3 F5" size="24" placeholder="space-separated hex bytes">
+    <label>exec</label><select id="ram-write-exec"><option value="false">false</option><option value="true">true</option></select>
+    <label>entry</label><input id="ram-write-entry" value="32768" size="8">
+  </div>
+  <div class="controls">
+    <button onclick="runRamWrite()">Send</button>
+    <span id="badge-ram-post"></span>
+  </div>
+  <div class="resp" id="resp-ram-post">—</div>
+</div>
+
+<!-- /api/exec POST -->
+<div class="endpoint POST">
+  <div class="req-line">
+    <span class="method">POST</span>
+    <span class="url">/api/exec</span>
+  </div>
+  <div class="body-preview">Set Z80 PC to addr and resume execution (no RAM write)</div>
+  <div class="param-row">
+    <label>addr</label><input id="exec-addr" value="32768" size="8">
+  </div>
+  <div class="controls">
+    <button onclick="runPostJSON('/api/exec',{addr:parseInt(document.getElementById('exec-addr').value)},'resp-exec')">Send</button>
+    <span id="badge-exec"></span>
+  </div>
+  <div class="resp" id="resp-exec">—</div>
+</div>
+
+<!-- /api/basic POST -->
+<div class="endpoint POST">
+  <div class="req-line">
+    <span class="method">POST</span>
+    <span class="url">/api/basic?reset=…&amp;run=…</span>
+  </div>
+  <div class="body-preview">Inject BASIC source (raw text body, not JSON). reset=1 → hard reset first. run=1 → RUN after inject.</div>
+  <div class="param-row">
+    <label>reset</label>
+    <select id="basic-reset"><option value="0">0</option><option value="1">1</option></select>
+    <label>run</label>
+    <select id="basic-run"><option value="0">0</option><option value="1">1</option></select>
+  </div>
+  <div class="param-row">
+    <label>BASIC src</label>
+    <textarea id="basic-src">10 PRINT "HELLO FROM WEB"
+20 GOTO 10</textarea>
+  </div>
+  <div class="controls">
+    <button onclick="runBasicPost()">Send</button>
+    <span id="badge-basic-post"></span>
+  </div>
+  <div class="resp" id="resp-basic-post">—</div>
+</div>
+
+<!-- /api/script POST -->
+<div class="endpoint POST">
+  <div class="req-line">
+    <span class="method">POST</span>
+    <span class="url">/api/script?lang=…</span>
+  </div>
+  <div class="body-preview">Run a CSL or Lua script (raw text body). ?lang=lua for Lua, default = CSL.</div>
+  <div class="param-row">
+    <label>lang</label>
+    <select id="script-lang"><option value="csl">csl</option><option value="lua">lua</option></select>
+  </div>
+  <div class="param-row">
+    <label>script</label>
+    <textarea id="script-body">-- CSL example
+wait(20)</textarea>
+  </div>
+  <div class="controls">
+    <button onclick="runScriptPost()">Send</button>
+    <span id="badge-script-post"></span>
+  </div>
+  <div class="resp" id="resp-script-post">—</div>
+</div>
+
+<!-- /api/disk POST create -->
+<div class="endpoint POST">
+  <div class="req-line">
+    <span class="method">POST</span>
+    <span class="url">/api/disk</span>
+    <span style="color:#666;font-size:.8em">— action: create</span>
+  </div>
+  <div class="body-preview">Create a blank disk image in the given drive (0=A, 1=B)</div>
+  <div class="param-row">
+    <label>drive</label>
+    <select id="disk-drive-create"><option value="0">0 (A:)</option><option value="1">1 (B:)</option></select>
+  </div>
+  <div class="controls">
+    <button onclick="runPostJSON('/api/disk',{action:'create',drive:parseInt(document.getElementById('disk-drive-create').value)},'resp-disk-create')">Send</button>
+    <span id="badge-disk-create"></span>
+  </div>
+  <div class="resp" id="resp-disk-create">—</div>
+</div>
+
+<!-- /api/disk POST save -->
+<div class="endpoint POST">
+  <div class="req-line">
+    <span class="method">POST</span>
+    <span class="url">/api/disk</span>
+    <span style="color:#666;font-size:.8em">— action: save (triggers browser download)</span>
+  </div>
+  <div class="body-preview">Save current disk image as .dsk file (response is binary — triggers download via &lt;a&gt;)</div>
+  <div class="param-row">
+    <label>drive</label>
+    <select id="disk-drive-save"><option value="0">0 (A:)</option><option value="1">1 (B:)</option></select>
+  </div>
+  <div class="controls">
+    <button onclick="runDiskSave()">Send</button>
+    <span id="badge-disk-save"></span>
+  </div>
+  <div class="resp" id="resp-disk-save">—</div>
+</div>
+
+<!-- /api/lang POST -->
+<div class="endpoint POST">
+  <div class="req-line">
+    <span class="method">POST</span>
+    <span class="url">/api/lang</span>
+  </div>
+  <div class="body-preview">Change UI language {"lang":"en"|"fr"|"es"|"de"}</div>
+  <div class="param-row">
+    <label>lang</label>
+    <select id="lang-set">
+      <option value="en">en</option>
+      <option value="fr">fr</option>
+      <option value="es">es</option>
+      <option value="de">de</option>
+    </select>
+  </div>
+  <div class="controls">
+    <button onclick="runPostJSON('/api/lang',{lang:document.getElementById('lang-set').value},'resp-lang-post')">Send</button>
+    <span id="badge-lang-post"></span>
+  </div>
+  <div class="resp" id="resp-lang-post">—</div>
+</div>
+
+<!-- /api/keymap POST -->
+<div class="endpoint POST">
+  <div class="req-line">
+    <span class="method">POST</span>
+    <span class="url">/api/keymap</span>
+  </div>
+  <div class="body-preview">Remap a key: kc (keycode hex), vk (CPC VK for unshifted), vk_s (shifted), nomod (bool)</div>
+  <div class="param-row">
+    <label>JSON body</label>
+    <textarea id="keymap-body">{"kc":"0x61","vk":65,"vk_s":65,"nomod":false}</textarea>
+  </div>
+  <div class="controls">
+    <button onclick="runPost('/api/keymap','keymap-body','resp-keymap-post')">Send</button>
+    <span id="badge-keymap-post"></span>
+  </div>
+  <div class="resp" id="resp-keymap-post">—</div>
+</div>
+
+<!-- ======================= DELETE ENDPOINTS ======================= -->
+<h2>DELETE Endpoints</h2>
+
+<!-- /api/script DELETE -->
+<div class="endpoint DELETE">
+  <div class="req-line">
+    <span class="method">DELETE</span>
+    <span class="url">/api/script</span>
+  </div>
+  <div class="body-preview">Abort the currently running CSL/Lua script</div>
+  <div class="controls">
+    <button onclick="runDelete('/api/script','resp-script-delete')">Send</button>
+    <span id="badge-script-delete"></span>
+  </div>
+  <div class="resp" id="resp-script-delete">—</div>
+</div>
+
+<script>
+const BASE = 'http://127.0.0.1:8765';
+
+function showResult(respId, badgeId, status, text) {
+  const el = document.getElementById(respId);
+  const badge = document.getElementById('badge-' + badgeId);
+  el.textContent = text;
+  el.className = 'resp ' + (status >= 200 && status < 300 ? 'ok' : status === 0 ? 'err' : 'err');
+  let cls = status >= 500 ? 's5xx' : status >= 400 ? 's4xx' : 's200';
+  badge.innerHTML = status
+    ? `<span class="status-badge ${cls}">${status}</span>`
+    : `<span class="status-badge s4xx">network error</span>`;
+}
+
+function setWait(respId, badgeId) {
+  document.getElementById(respId).className = 'resp wait';
+  document.getElementById(respId).textContent = 'waiting…';
+  document.getElementById('badge-' + badgeId).textContent = '';
+}
+
+async function doFetch(url, opts, respId, badgeId) {
+  setWait(respId, badgeId);
+  try {
+    const r = await fetch(BASE + url, opts);
+    const text = await r.text();
+    showResult(respId, badgeId, r.status, text);
+  } catch(e) {
+    showResult(respId, badgeId, 0, 'Network error: ' + e.message);
+  }
+}
+
+function runGet(path, respId) {
+  const badgeId = respId.replace(/^resp-/, '');
+  doFetch(path, {}, respId, badgeId);
+}
+
+function runDelete(path, respId) {
+  const badgeId = respId.replace(/^resp-/, '');
+  doFetch(path, {method:'DELETE'}, respId, badgeId);
+}
+
+function runPost(path, bodyInputId, respId) {
+  const badgeId = respId.replace(/^resp-/, '');
+  const body = document.getElementById(bodyInputId).value;
+  doFetch(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body
+  }, respId, badgeId);
+}
+
+function runPostJSON(path, obj, respId) {
+  const badgeId = respId.replace(/^resp-/, '');
+  doFetch(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(obj)
+  }, respId, badgeId);
+}
+
+function runRamGet() {
+  const addr = document.getElementById('ram-addr').value;
+  const len  = document.getElementById('ram-len').value;
+  const bank = document.getElementById('ram-bank').value;
+  doFetch(`/api/ram?addr=${addr}&len=${len}&bank=${bank}`, {}, 'resp-ram-get', 'ram-get');
+}
+
+function runRamWrite() {
+  const addr  = parseInt(document.getElementById('ram-write-addr').value);
+  const data  = document.getElementById('ram-write-data').value.replace(/\s+/g,'');
+  const exec  = document.getElementById('ram-write-exec').value === 'true';
+  const entry = parseInt(document.getElementById('ram-write-entry').value);
+  doFetch('/api/ram', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({addr, data, exec, entry})
+  }, 'resp-ram-post', 'ram-post');
+}
+
+function runBasicExport() {
+  const verbose = document.getElementById('basic-verbose').value;
+  doFetch(`/api/basic_export?verbose=${verbose}`, {}, 'resp-basic-export', 'basic-export');
+}
+
+function runBasicPost() {
+  const reset = document.getElementById('basic-reset').value;
+  const run   = document.getElementById('basic-run').value;
+  const src   = document.getElementById('basic-src').value;
+  doFetch(`/api/basic?reset=${reset}&run=${run}`, {
+    method: 'POST',
+    headers: {'Content-Type': 'text/plain'},
+    body: src
+  }, 'resp-basic-post', 'basic-post');
+}
+
+function runScriptPost() {
+  const lang = document.getElementById('script-lang').value;
+  const src  = document.getElementById('script-body').value;
+  const qs   = lang === 'lua' ? '?lang=lua' : '';
+  doFetch(`/api/script${qs}`, {
+    method: 'POST',
+    headers: {'Content-Type': 'text/plain'},
+    body: src
+  }, 'resp-script-post', 'script-post');
+}
+
+async function runDiskSave() {
+  const drive = parseInt(document.getElementById('disk-drive-save').value);
+  setWait('resp-disk-save', 'disk-save');
+  try {
+    const r = await fetch(BASE + '/api/disk', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action:'save', drive})
+    });
+    if (r.ok) {
+      const blob = await r.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url; a.download = `disk_${String.fromCharCode(65+drive)}.dsk`; a.click();
+      URL.revokeObjectURL(url);
+      showResult('resp-disk-save', 'disk-save', r.status,
+        `OK — ${blob.size} bytes, download triggered (disk_${String.fromCharCode(65+drive)}.dsk)`);
+    } else {
+      const text = await r.text();
+      showResult('resp-disk-save', 'disk-save', r.status, text);
+    }
+  } catch(e) {
+    showResult('resp-disk-save', 'disk-save', 0, 'Network error: ' + e.message);
+  }
+}
+</script>
+</body>
+</html>
