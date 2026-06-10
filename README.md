@@ -136,10 +136,10 @@ The Amstrad CPC ROMs are the property of Amstrad plc, redistributed with permiss
 
 # Development Team
 
-**AMSpiriT Original** version (Windows) and Core was written by Dmanu78 with Technical supervision by Longshot, and some support by Siko
-**AMSpirit Lite** was developed by Siko, Mac Port and VSCode plugins by Gurneyh
-**Basic Tokenizer** written by Tronic
-**Test Team**: Tronic, Fred/Fugitif, LordHeavy, Ricolaoz
+* **AMSpiriT Original** version (Windows) and Core was written by Dmanu78 with Technical supervision by Longshot, and some support by Siko
+* **AMSpirit Lite** was developed by Siko, Mac Port and VSCode plugins by Gurneyh
+* **Basic Tokenizer** written by Tronic
+* **Test Team**: Tronic, Fred/Fugitif, LordHeavy, Ricolaoz
 
 # Acknowledgments
 
