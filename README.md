@@ -24,7 +24,11 @@ A cross-platform port of the same emulation core, targeting Linux, macOS, and Wi
 | **Qt** | Experimental | Richer UI in progress; gamepad support via Qt5 Gamepad |
 | **Libretro** | Partial | For use inside RetroArch |
 
-AMSpiriT Lite exposes advanced developer features: a [Lua/CSL scripting engine](docs/scripting.md), a [REST debug API](docs/web_server_api.md), BASIC injection/export, and configurable keyboard mapping.
+AMSpiriT Lite exposes advanced developer features: 
+ * a [Lua/CSL scripting engine](https://github.com/AMSpiriT-Emulator/amspirit-releases/blob/main/docs/lite/scripting.md)
+ * a [REST debug API](https://github.com/AMSpiriT-Emulator/amspirit-releases/blob/main/docs/lite/web_api.md), 
+ * [BASIC injection/export](https://github.com/AMSpiriT-Emulator/amspirit-releases/blob/main/docs/lite/basic_injection_export.md)
+
 
 ---
 
@@ -37,11 +41,15 @@ Releases are published as GitHub Releases. Each release includes binaries for al
 | Platform | Architecture | Frontend | Package |
 |---|---|---|---|
 | Windows | x86_64 | AMSpiriT (original) | `.zip` |
+| Linux | x86_64 | AMSpiriT Lite — SDL + Qt | `AppImage` |
+| Linux | aarch64 | AMSpiriT Lite — SDL2 +Qt| `AppImage` |
+| macOS | Apple Silicon (arm64) | AMSpiriT Lite — SDL2 + Qt | `.dmg` |
+
+Coming soon:
+
 | Windows | x86_64 | AMSpiriT Lite — SDL2 | `.zip` |
 | Windows | x86_64 | AMSpiriT Lite — Qt | `.zip` |
-| Linux | x86_64 | AMSpiriT Lite — SDL2 + Qt | AppImage / Flatpak |
-| Linux | aarch64 | AMSpiriT Lite — SDL2 | AppImage |
-| macOS | Apple Silicon (arm64) | AMSpiriT Lite — SDL2 + Qt | `.dmg` |
+and Retro Arch for x86_64,aarch64, Apple Silicon, and Windows.
 
 > Older CPUs (pre-SSE4.2 or pre-ARMv8.2) are not supported.
 
