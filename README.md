@@ -70,13 +70,6 @@ chmod +x AMSpiriT-Lite-x86_64.AppImage
 ./AMSpiriT-Lite-x86_64.AppImage -R /path/to/ROMs
 ```
 
-Or install via Flatpak (when available):
-
-```bash
-flatpak install amspirit-lite.flatpak
-flatpak run org.amspirit.AMSpiriTLite
-```
-
 ### macOS
 
 Open the `.dmg`, drag *AMSpiriT Lite* to your Applications folder, and launch it. On first launch, macOS may require you to approve the app in **System Settings → Privacy & Security**.
@@ -90,6 +83,7 @@ The [`examples/`](examples/) directory contains ready-to-use files to get starte
 ### BASIC programs (`.bas`)
 
 Inject any of these into the emulator via **Tools → Inject BASIC** (Qt frontend) or the [BASIC injection API](docs/basic_injection_export.md):
+You also can drag'n drop the files.
 
 | File | Description |
 |---|---|
@@ -124,21 +118,6 @@ See the [Web/REST API reference](docs/web_server_api.md) for the full endpoint l
 | `.cpr` | Cartridge | CPC Plus / GX4000 |
 
 Drag and drop any supported file onto the emulator window to load it instantly.
-
----
-
-## Source code
-
-The source repositories live under the [AMSpiriT-Emulator](https://github.com/AMSpiriT-Emulator) GitHub organisation:
-
-- **amspirit-lite** — cross-platform port (SDL2, Qt, Libretro frontends)
-
-The original AMSpiriT (Windows) source is proprietary and not publicly available.
-
----
-
-## License
-
-**AMSpiriT Lite** is released under the terms described in `LICENSE` in each release archive.
+Files changes are detected, and automatically reloaded. Great for developers. You can edit your bas file in an external editor and update it automatically when you save it on disk! Easy!
 
 The Amstrad CPC ROMs are the property of Amstrad plc, redistributed with permission for personal use only.
