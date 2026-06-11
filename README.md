@@ -150,5 +150,11 @@ Thanks to Made and Ced for their illustrations and Logos.
 Thanks also to AMSpiriT's discord members, and members of FORUM.SYSTEM-CFG forum  for their support.
 
 
+--
+
+Copyright (c) 2020-2026 David Manuel & AMSpiriT Team
+
+This software is licensed under the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International Public License. 
+To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-nd/4.0/ or see the LICENSE.txt file.
 
 
