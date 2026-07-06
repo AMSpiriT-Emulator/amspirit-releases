@@ -29,6 +29,8 @@ button:active{background:#4a5a7a}
 .resp.ok   {border-color:#2a4a2a;color:#8c8}
 .resp.err  {border-color:#4a2a2a;color:#c88}
 .resp.wait {border-color:#4a3a1a;color:#ca8}
+.sse-cnt{font-size:.82em;background:#111;border:1px solid #2a2a2a;border-radius:3px;padding:2px 8px}
+.sse-cnt b{font-size:1.1em;margin-left:3px}
 .status-badge{font-size:.75em;padding:1px 6px;border-radius:2px;margin-left:4px}
 .s200{background:#1a3a1a;color:#6c6}
 .s4xx{background:#3a1a1a;color:#c66}
@@ -45,6 +47,52 @@ textarea{resize:vertical;min-height:48px;width:100%}
 <body>
 <h1>AMSpiriT — Web Server Endpoint Tests</h1>
 <p class="subtitle">Each section issues one real HTTP request to 127.0.0.1:8765 and shows the raw response.</p>
+
+<!-- ======================= SSE ======================= -->
+<h2>Server-Sent Events — /api/events</h2>
+
+<div class="endpoint" style="border-color:#2a4a6a">
+  <div class="req-line">
+    <span class="method" style="color:#6af">SSE</span>
+    <span class="url">/api/events</span>
+    <span id="sse-status" style="font-size:.75em;margin-left:8px;color:#888">disconnected</span>
+  </div>
+  <div class="body-preview">Persistent push stream. The server sends events as they occur. No polling needed.</div>
+
+  <div class="param-row" style="margin-bottom:6px">
+    <label>Topics</label>
+    <label><input type="checkbox" id="sse-frame" checked> frame</label>
+    <label><input type="checkbox" id="sse-z80_bp" checked> z80_bp</label>
+    <label><input type="checkbox" id="sse-basic_bp" checked> basic_bp</label>
+    <label><input type="checkbox" id="sse-pause" checked> pause</label>
+    <label><input type="checkbox" id="sse-reset" checked> reset</label>
+  </div>
+
+  <div class="controls">
+    <button id="sse-btn-connect" onclick="sseConnect()">Connect</button>
+    <button id="sse-btn-disconnect" onclick="sseDisconnect()" disabled>Disconnect</button>
+    <button onclick="sseClearLog()">Clear log</button>
+    <label style="color:#777;font-size:.8em;margin-left:8px">
+      <input type="checkbox" id="sse-pause-on-bp" checked> Pause log on breakpoint
+    </label>
+    <label style="color:#777;font-size:.8em;margin-left:8px">
+      <input type="checkbox" id="sse-log-frame"> Log frame events
+    </label>
+  </div>
+
+  <!-- per-topic counters -->
+  <div id="sse-counters" style="display:flex;gap:12px;margin:6px 0;flex-wrap:wrap">
+    <span class="sse-cnt" data-topic="frame"   style="color:#6af">frame: <b id="cnt-frame">0</b></span>
+    <span class="sse-cnt" data-topic="z80_bp"  style="color:#f96">z80_bp: <b id="cnt-z80_bp">0</b></span>
+    <span class="sse-cnt" data-topic="basic_bp" style="color:#fc6">basic_bp: <b id="cnt-basic_bp">0</b></span>
+    <span class="sse-cnt" data-topic="pause"   style="color:#8f8">pause: <b id="cnt-pause">0</b></span>
+    <span class="sse-cnt" data-topic="reset"   style="color:#fa6">reset: <b id="cnt-reset">0</b></span>
+  </div>
+
+  <div class="resp" id="sse-log" style="max-height:260px;min-height:80px;font-size:.78em;line-height:1.4">
+    — connect to start receiving events —
+  </div>
+</div>
 
 <!-- ======================= GET ENDPOINTS ======================= -->
 <h2>GET Endpoints</h2>
@@ -91,6 +139,20 @@ textarea{resize:vertical;min-height:48px;width:100%}
   <div class="resp" id="resp-ga">—</div>
 </div>
 
+<!-- /api/crtc -->
+<div class="endpoint GET">
+  <div class="req-line">
+    <span class="method">GET</span>
+    <span class="url">/api/crtc</span>
+  </div>
+  <div class="body-preview">CRTC registers snapshot (R0–R17, internal counters, VMA, HSYNC/VSYNC)</div>
+  <div class="controls">
+    <button onclick="runGet('/api/crtc','resp-crtc')">Send</button>
+    <span id="badge-crtc"></span>
+  </div>
+  <div class="resp" id="resp-crtc">—</div>
+</div>
+
 <!-- /api/psg -->
 <div class="endpoint GET">
   <div class="req-line">
@@ -125,7 +187,7 @@ textarea{resize:vertical;min-height:48px;width:100%}
     <span class="method">GET</span>
     <span class="url">/api/state</span>
   </div>
-  <div class="body-preview">Combined snapshot: z80 + ga + psg + fdc + emu (backward-compat aggregate of the sub-endpoints above)</div>
+  <div class="body-preview">Combined snapshot: z80 + ga + crtc + psg + fdc + emu (aggregate of the sub-endpoints above)</div>
   <div class="controls">
     <button onclick="runGet('/api/state','resp-state')">Send</button>
     <span id="badge-state"></span>
@@ -153,11 +215,12 @@ textarea{resize:vertical;min-height:48px;width:100%}
     <span class="method">GET</span>
     <span class="url">/api/ram?addr=…&amp;len=…&amp;bank=…</span>
   </div>
-  <div class="body-preview">Hex dump of CPC RAM. bank=0 = central RAM, bank=1..N = extended page N-1</div>
+  <div class="body-preview">Hex dump of CPC RAM. bank=0 = central RAM, bank=1..N = extended page N-1. view=cpu = memory as the Z80 sees it (ROM overlays + banking).</div>
   <div class="param-row">
     <label>addr</label><input id="ram-addr" value="0" size="6">
     <label>len</label><input id="ram-len" value="64" size="6">
     <label>bank</label><input id="ram-bank" value="0" size="4">
+    <label>view</label><select id="ram-view"><option value="">raw</option><option value="cpu">cpu</option></select>
   </div>
   <div class="controls">
     <button onclick="runRamGet()">Send</button>
@@ -243,8 +306,145 @@ textarea{resize:vertical;min-height:48px;width:100%}
   <div class="resp" id="resp-basic-export">—</div>
 </div>
 
+<!-- /api/history GET -->
+<div class="endpoint GET">
+  <div class="req-line"><span class="method">GET</span><span class="url">/api/history</span></div>
+  <div class="body-preview">Last 20 executed Z80 instructions [{pc,hex}] (opcode bytes from CPU-visible memory)</div>
+  <div class="controls">
+    <button onclick="runGet('/api/history','resp-history')">Send</button>
+    <span id="badge-history"></span>
+  </div>
+  <div class="resp" id="resp-history">—</div>
+</div>
+
+<!-- /api/codemap GET -->
+<div class="endpoint GET">
+  <div class="req-line"><span class="method">GET</span><span class="url">/api/codemap</span></div>
+  <div class="body-preview">65536-bit bitmap (8192 bytes hex) of addresses where an instruction has executed (code/data zones)</div>
+  <div class="controls">
+    <button onclick="runGet('/api/codemap','resp-codemap')">Send</button>
+    <span id="badge-codemap"></span>
+  </div>
+  <div class="resp" id="resp-codemap">—</div>
+</div>
+
+<!-- /api/memmap GET -->
+<div class="endpoint GET">
+  <div class="req-line"><span class="method">GET</span><span class="url">/api/memmap</span></div>
+  <div class="body-preview">ROM/RAM mapping per 16 KB region + RAM banking config (rmr, ram_mode, ram_page)</div>
+  <div class="controls">
+    <button onclick="runGet('/api/memmap','resp-memmap')">Send</button>
+    <span id="badge-memmap"></span>
+  </div>
+  <div class="resp" id="resp-memmap">—</div>
+</div>
+
+<!-- /api/render GET -->
+<div class="endpoint GET">
+  <div class="req-line"><span class="method">GET</span><span class="url">/api/render</span></div>
+  <div class="body-preview">CRT monitor preset, screen type and shader parameters</div>
+  <div class="controls">
+    <button onclick="runGet('/api/render','resp-render-get')">Send</button>
+    <span id="badge-render-get"></span>
+  </div>
+  <div class="resp" id="resp-render-get">—</div>
+</div>
+
+<!-- /api/basic_listing GET -->
+<div class="endpoint GET">
+  <div class="req-line"><span class="method">GET</span><span class="url">/api/basic_listing</span></div>
+  <div class="body-preview">Structured listing: lines + statements with RAM address ranges + referenced variables</div>
+  <div class="controls">
+    <button onclick="runGet('/api/basic_listing','resp-basic-listing')">Send</button>
+    <span id="badge-basic-listing"></span>
+  </div>
+  <div class="resp" id="resp-basic-listing">—</div>
+</div>
+
+<!-- /api/scan_ptr GET -->
+<div class="endpoint GET">
+  <div class="req-line"><span class="method">GET</span><span class="url">/api/scan_ptr</span></div>
+  <div class="body-preview">Diagnostic: RAM words pointing into the BASIC program, with the line each points into</div>
+  <div class="controls">
+    <button onclick="runGet('/api/scan_ptr','resp-scan-ptr')">Send</button>
+    <span id="badge-scan-ptr"></span>
+  </div>
+  <div class="resp" id="resp-scan-ptr">—</div>
+</div>
+
 <!-- ======================= POST ENDPOINTS ======================= -->
 <h2>POST Endpoints</h2>
+
+<!-- /api/step POST -->
+<div class="endpoint POST">
+  <div class="req-line"><span class="method">POST</span><span class="url">/api/step</span></div>
+  <div class="body-preview">Execute exactly one Z80 instruction, then re-pause (no body). Pause the emulator first.</div>
+  <div class="controls">
+    <button onclick="runPostNoBody('/api/step','resp-step')">Send</button>
+    <span id="badge-step"></span>
+  </div>
+  <div class="resp" id="resp-step">—</div>
+</div>
+
+<!-- /api/render POST -->
+<div class="endpoint POST">
+  <div class="req-line"><span class="method">POST</span><span class="url">/api/render</span></div>
+  <div class="body-preview">Change monitor preset / screen type / CRT shader params. Any subset of keys.</div>
+  <div class="param-row">
+    <label>JSON body</label>
+    <textarea id="render-body">{"monitor":1}</textarea>
+  </div>
+  <div class="controls">
+    <button onclick="runPost('/api/render','render-body','resp-render-post')">Send</button>
+    <span id="badge-render-post"></span>
+  </div>
+  <div class="resp" id="resp-render-post">—</div>
+</div>
+
+<!-- /api/basic_step POST -->
+<div class="endpoint POST">
+  <div class="req-line"><span class="method">POST</span><span class="url">/api/basic_step?mode=…</span></div>
+  <div class="body-preview">Step the BASIC program to the next statement (mode=stmt) or next line (mode=line). Pause first.</div>
+  <div class="param-row">
+    <label>mode</label>
+    <select id="basic-step-mode"><option value="stmt">stmt (statement)</option><option value="line">line</option></select>
+  </div>
+  <div class="controls">
+    <button onclick="runBasicStep()">Send</button>
+    <span id="badge-basic-step"></span>
+  </div>
+  <div class="resp" id="resp-basic-step">—</div>
+</div>
+
+<!-- /api/basic_bp POST -->
+<div class="endpoint POST">
+  <div class="req-line"><span class="method">POST</span><span class="url">/api/basic_bp</span></div>
+  <div class="body-preview">Set the BASIC line-breakpoint set (comma-separated line numbers; empty = clear all)</div>
+  <div class="param-row">
+    <label>lines</label><input id="basic-bp-lines" value="10,40" size="20" placeholder="10,40,100">
+  </div>
+  <div class="controls">
+    <button onclick="runBasicBp()">Send</button>
+    <span id="badge-basic-bp"></span>
+  </div>
+  <div class="resp" id="resp-basic-bp">—</div>
+</div>
+
+<!-- /api/basic_runto POST -->
+<div class="endpoint POST">
+  <div class="req-line"><span class="method">POST</span><span class="url">/api/basic_runto?line=… | ?addr=…</span></div>
+  <div class="body-preview">One-shot run to a BASIC line (line=) or statement address (addr=, an 0xAE1B value from /api/basic_listing)</div>
+  <div class="param-row">
+    <label>target</label>
+    <select id="basic-runto-kind"><option value="line">line</option><option value="addr">addr</option></select>
+    <input id="basic-runto-val" value="40" size="8">
+  </div>
+  <div class="controls">
+    <button onclick="runBasicRunto()">Send</button>
+    <span id="badge-basic-runto"></span>
+  </div>
+  <div class="resp" id="resp-basic-runto">—</div>
+</div>
 
 <!-- /api/config POST -->
 <div class="endpoint POST">
@@ -481,6 +681,20 @@ wait(20)</textarea>
   <div class="resp" id="resp-script-delete">—</div>
 </div>
 
+<!-- /api/codemap DELETE -->
+<div class="endpoint DELETE">
+  <div class="req-line">
+    <span class="method">DELETE</span>
+    <span class="url">/api/codemap</span>
+  </div>
+  <div class="body-preview">Reset the executed-instruction bitmap and the instruction history</div>
+  <div class="controls">
+    <button onclick="runDelete('/api/codemap','resp-codemap-delete')">Send</button>
+    <span id="badge-codemap-delete"></span>
+  </div>
+  <div class="resp" id="resp-codemap-delete">—</div>
+</div>
+
 <script>
 const BASE = 'http://127.0.0.1:8765';
 
@@ -541,11 +755,38 @@ function runPostJSON(path, obj, respId) {
   }, respId, badgeId);
 }
 
+function runPostNoBody(path, respId) {
+  const badgeId = respId.replace(/^resp-/, '');
+  doFetch(path, {method:'POST'}, respId, badgeId);
+}
+
+function runBasicStep() {
+  const mode = document.getElementById('basic-step-mode').value;
+  const qs = mode === 'line' ? '?mode=line' : '';
+  doFetch(`/api/basic_step${qs}`, {method:'POST'}, 'resp-basic-step', 'basic-step');
+}
+
+function runBasicBp() {
+  const lines = document.getElementById('basic-bp-lines').value;
+  doFetch('/api/basic_bp', {
+    method: 'POST',
+    headers: {'Content-Type': 'text/plain'},
+    body: lines
+  }, 'resp-basic-bp', 'basic-bp');
+}
+
+function runBasicRunto() {
+  const kind = document.getElementById('basic-runto-kind').value;
+  const val  = document.getElementById('basic-runto-val').value;
+  doFetch(`/api/basic_runto?${kind}=${val}`, {method:'POST'}, 'resp-basic-runto', 'basic-runto');
+}
+
 function runRamGet() {
   const addr = document.getElementById('ram-addr').value;
   const len  = document.getElementById('ram-len').value;
   const bank = document.getElementById('ram-bank').value;
-  doFetch(`/api/ram?addr=${addr}&len=${len}&bank=${bank}`, {}, 'resp-ram-get', 'ram-get');
+  const view = document.getElementById('ram-view').value;
+  doFetch(`/api/ram?addr=${addr}&len=${len}&bank=${bank}${view?'&view='+view:''}`, {}, 'resp-ram-get', 'ram-get');
 }
 
 function runRamWrite() {
@@ -586,6 +827,110 @@ function runScriptPost() {
     body: src
   }, 'resp-script-post', 'script-post');
 }
+
+// ── SSE client ────────────────────────────────────────────────────────────────
+let g_sse = null;
+let g_sse_paused = false;
+const g_sse_counters = {frame:0, z80_bp:0, basic_bp:0, pause:0, reset:0};
+
+const SSE_COLORS = {frame:'#6af', z80_bp:'#f96', basic_bp:'#fc6', pause:'#8f8', reset:'#fa6'};
+
+function sseResetCounters() {
+  for (const k of Object.keys(g_sse_counters)) {
+    g_sse_counters[k] = 0;
+    const el = document.getElementById('cnt-' + k);
+    if (el) el.textContent = '0';
+  }
+}
+
+function sseBump(type) {
+  g_sse_counters[type] = (g_sse_counters[type] || 0) + 1;
+  const el = document.getElementById('cnt-' + type);
+  if (el) el.textContent = g_sse_counters[type];
+}
+
+function sseClearLog() {
+  document.getElementById('sse-log').innerHTML = '';
+  sseResetCounters();
+}
+
+function sseConnect() {
+  if (g_sse) sseDisconnect();
+
+  const topics = ['frame','z80_bp','basic_bp','pause','reset']
+    .filter(t => document.getElementById('sse-'+t)?.checked);
+  const url = BASE + '/api/events' + (topics.length < 5 ? '?topics=' + topics.join(',') : '');
+
+  g_sse = new EventSource(url);
+  g_sse_paused = false;
+  sseResetCounters();
+  setSseStatus('connecting…', '#ca8');
+
+  g_sse.onopen = () => {
+    setSseStatus('connected', '#6c8');
+    document.getElementById('sse-btn-connect').disabled = true;
+    document.getElementById('sse-btn-disconnect').disabled = false;
+    sseLog('── connected to ' + url + ' ──', '#56a');
+  };
+  g_sse.onerror = () => {
+    setSseStatus('error / closed', '#c66');
+    document.getElementById('sse-btn-connect').disabled = false;
+    document.getElementById('sse-btn-disconnect').disabled = true;
+    sseLog('── connection lost ──', '#c66');
+    g_sse = null;
+  };
+
+  ['frame','z80_bp','basic_bp','pause','reset'].forEach(type => {
+    g_sse.addEventListener(type, e => {
+      sseBump(type);
+
+      const pauseOnBp = document.getElementById('sse-pause-on-bp')?.checked;
+      if (type === 'z80_bp' || type === 'basic_bp') {
+        if (pauseOnBp) g_sse_paused = true;
+      }
+      if (g_sse_paused && type === 'frame') return;
+
+      // frame: only log if the checkbox is explicitly enabled (avoids flood).
+      const logFrame = document.getElementById('sse-log-frame')?.checked;
+      if (type === 'frame' && !logFrame) return;
+
+      let data;
+      try { data = JSON.parse(e.data); } catch { data = e.data; }
+      sseLog('[' + type + '] ' + JSON.stringify(data), SSE_COLORS[type] || '#ccc');
+    });
+  });
+}
+
+function sseDisconnect() {
+  if (g_sse) { g_sse.close(); g_sse = null; }
+  setSseStatus('disconnected', '#888');
+  document.getElementById('sse-btn-connect').disabled = false;
+  document.getElementById('sse-btn-disconnect').disabled = true;
+  sseLog('── disconnected ──', '#666');
+}
+
+function setSseStatus(msg, color) {
+  const el = document.getElementById('sse-status');
+  el.textContent = msg; el.style.color = color;
+}
+
+function sseLog(msg, color) {
+  const el = document.getElementById('sse-log');
+  if (el.textContent === '— connect to start receiving events —') el.innerHTML = '';
+  const line = document.createElement('div');
+  line.textContent = new Date().toLocaleTimeString('en-GB',{hour12:false}) + '  ' + msg;
+  line.style.color = color || '#ccc';
+  el.appendChild(line);
+  // Cap log at 200 lines
+  while (el.children.length > 200) el.removeChild(el.firstChild);
+  el.scrollTop = el.scrollHeight;
+}
+
+// ── Resume log after breakpoint pause (click the log) ─────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  const log = document.getElementById('sse-log');
+  if (log) log.addEventListener('click', () => { g_sse_paused = false; });
+});
 
 async function runDiskSave() {
   const drive = parseInt(document.getElementById('disk-drive-save').value);
