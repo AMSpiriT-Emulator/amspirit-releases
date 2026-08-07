@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AMSpiriT — RAM Search</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:#1a1a1a;color:#ccc;font:13px/1.5 'Courier New',monospace;padding:16px;max-width:900px;margin:0 auto}
+h1{color:#6af;font-size:1.1em;margin-bottom:4px}
+.subtitle{color:#666;font-size:.85em;margin-bottom:16px}
+h2{color:#89b;font-size:.75em;text-transform:uppercase;letter-spacing:1px;
+   border-bottom:1px solid #333;padding-bottom:2px;margin:18px 0 8px}
+.panel{background:#222;border:1px solid #333;border-radius:3px;padding:10px;margin-bottom:10px}
+.row{display:flex;gap:8px;align-items:center;margin-bottom:6px;flex-wrap:wrap}
+.row label{color:#777;font-size:.8em;min-width:60px}
+input,select,button,textarea{background:#181818;color:#ccc;border:1px solid #3a3a3a;border-radius:2px;
+                     padding:3px 7px;font:inherit;font-size:.85em}
+button{background:#2a3a5a;color:#c0d0f0;border:1px solid #3a4a6a;cursor:pointer}
+button:hover:not(:disabled){background:#3a4a6a}
+button:disabled{opacity:.4;cursor:not-allowed}
+button.danger{background:#4a2a2a;border-color:#6a3a3a;color:#e0b0b0}
+button.danger:hover:not(:disabled){background:#5a3232}
+button.frozen{background:#4a3a1a;border-color:#6a5a2a;color:#f0d0a0}
+#status{font-size:.8em;padding:2px 8px;border-radius:2px}
+.status-ok{background:#1a3a1a;color:#6c6}
+.status-bad{background:#3a1a1a;color:#c66}
+table{width:100%;border-collapse:collapse;font-size:.82em}
+th,td{padding:3px 6px;text-align:left;border-bottom:1px solid #2a2a2a}
+th{color:#89b;font-weight:normal;text-transform:uppercase;font-size:.85em}
+tr:hover td{background:#252525}
+.mono{font-family:'Courier New',monospace}
+.delta-up{color:#8c8}
+.delta-down{color:#f88}
+.count{color:#6af;font-weight:bold}
+.hint{color:#666;font-size:.8em}
+.screen-wrap{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+#screen{max-width:384px;border:1px solid #333;image-rendering:pixelated}
+</style>
+</head>
+<body>
+
+<h1>AMSpiriT — RAM Search</h1>
+<p class="subtitle">
+  Classic "find the life counter" technique: take a value, play a bit
+  (lose a life, score a point…), then keep only the addresses whose new
+  value matches what you'd expect. Repeat until one address remains — or
+  test the survivors by writing to them.
+  Talks directly to the embedded web server (by default at <code>127.0.0.1:8765</code>)
+</p>
+
+<div class="panel row">
+  <span id="status" class="status-bad">checking…</span>
+  <span id="frame-info" class="hint"></span>
+  <button onclick="refreshScreen()">Refresh screen</button>
+  <label><input type="checkbox" id="auto-screen"> auto (2s)</label>
+</div>
+
+<div class="panel row">
+  <label>Server</label>
+  <input id="server-addr" size="24" placeholder="127.0.0.1:8765">
+  <button onclick="applyServerAddr()">Connect</button>
+  <span class="hint">host:port of the emulator's web debug server (saved for next time)</span>
+</div>
+
+<div class="panel screen-wrap">
+  <img id="screen" alt="(screenshot)">
+</div>
+
+<h2>1 — Search setup</h2>
+<div class="panel">
+  <div class="row">
+    <label>Value size</label>
+    <select id="width">
+      <option value="1" selected>1 byte</option>
+      <option value="2">2 bytes (word, LE)</option>
+      <option value="4">4 bytes (dword, LE)</option>
+    </select>
+    <label>Bank</label>
+    <input id="bank" value="0" size="3" title="0 = central RAM, 1..N = extended RAM page N-1">
+    <label>View</label>
+    <select id="view">
+      <option value="" selected>raw</option>
+      <option value="cpu">cpu (ROM/banking applied)</option>
+    </select>
+  </div>
+  <div class="row">
+    <label>Range</label>
+    from <input id="addr-from" value="0" size="6">
+    to <input id="addr-to" value="65535" size="6">
+    <span class="hint">(inclusive; shrink this to skip ROM/system variables you don't care about)</span>
+  </div>
+  <div class="row">
+    <label>Initial value</label>
+    <select id="init-mode">
+      <option value="unknown" selected>Unknown (start with every address)</option>
+      <option value="exact">Known exact value</option>
+    </select>
+    <input id="init-value" value="" size="8" placeholder="e.g. 3 or 0x03" disabled>
+  </div>
+  <div class="row">
+    <button id="btn-start" onclick="startSearch()">Start search</button>
+    <button id="btn-reset" class="danger" onclick="resetSearch()" disabled>Reset search</button>
+  </div>
+</div>
+
+<h2>2 — Narrow it down</h2>
+<div class="panel">
+  <div class="row">
+    <label>Filter</label>
+    <select id="filter" disabled onchange="updateFilterUI()">
+      <option value="exact">Value is exactly…</option>
+      <option value="changed" selected>Changed since last scan</option>
+      <option value="unchanged">Unchanged since last scan</option>
+      <option value="increased">Increased since last scan</option>
+      <option value="decreased">Decreased since last scan</option>
+      <option value="increased_by">Increased by exactly…</option>
+      <option value="decreased_by">Decreased by exactly…</option>
+      <option value="greater_than">Greater than…</option>
+      <option value="less_than">Less than…</option>
+    </select>
+    <input id="filter-value" value="" size="8" placeholder="value" disabled>
+    <button id="btn-scan" onclick="nextScan()" disabled>Scan again</button>
+  </div>
+  <div class="row hint">
+    Play the game between scans (lose a life, gain a point…), then pick the
+    filter that matches what just happened and hit "Scan again".
+  </div>
+</div>
+
+<h2>3 — Candidates</h2>
+<div class="panel">
+  <div class="row">
+    <span>Remaining: <span id="count" class="count">—</span></span>
+    <label><input type="checkbox" id="live-values" onchange="toggleLive()"> live values (1s)</label>
+    <button onclick="renderResults()">Refresh table</button>
+  </div>
+  <div id="too-many" class="hint" style="display:none"></div>
+  <table id="results-table" style="display:none">
+    <thead><tr><th>Address</th><th>Base value</th><th>Current</th><th>Δ</th><th>Test value</th><th></th><th></th></tr></thead>
+    <tbody id="results-body"></tbody>
+  </table>
+</div>
+
+<script>
+const DEFAULT_ADDR = '127.0.0.1:8765';
+let g_serverAddr = localStorage.getItem('ram-search-server-addr') || DEFAULT_ADDR;
+let BASE = 'http://' + g_serverAddr;
+
+document.getElementById('server-addr').value = g_serverAddr;
+
+function applyServerAddr() {
+  const addr = document.getElementById('server-addr').value.trim() || DEFAULT_ADDR;
+  g_serverAddr = addr;
+  BASE = 'http://' + addr;
+  localStorage.setItem('ram-search-server-addr', addr);
+  refreshScreen();
+}
+
+document.getElementById('server-addr').addEventListener('keydown', e => {
+  if (e.key === 'Enter') applyServerAddr();
+});
+
+// ── connection / screenshot ────────────────────────────────────────────────
+async function checkStatus() {
+  const el = document.getElementById('status');
+  try {
+    const r = await fetch(BASE + '/api/ping');
+    const j = await r.json();
+    el.textContent = 'connected — ' + (j.emu.paused ? 'paused' : j.emu.fps.toFixed(0) + ' fps');
+    el.className = 'status-ok';
+    document.getElementById('frame-info').textContent = 'frame ' + j.emu.frames;
+  } catch (e) {
+    el.textContent = 'not connected (' + e.message + ')';
+    el.className = 'status-bad';
+  }
+}
+
+async function refreshScreen() {
+  try {
+    const r = await fetch(BASE + '/api/screenshot?crop=1');
+    const blob = await r.blob();
+    document.getElementById('screen').src = URL.createObjectURL(blob);
+  } catch (e) { /* ignore, connection status panel already reports it */ }
+  checkStatus();
+}
+
+let g_autoScreenTimer = null;
+document.getElementById('auto-screen').addEventListener('change', e => {
+  if (g_autoScreenTimer) { clearInterval(g_autoScreenTimer); g_autoScreenTimer = null; }
+  if (e.target.checked) g_autoScreenTimer = setInterval(refreshScreen, 2000);
+});
+
+// ── RAM helpers ─────────────────────────────────────────────────────────────
+function hexToBytes(hex) {
+  const out = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
+  return out;
+}
+
+function valueAt(bytes, addr, width) {
+  let v = 0;
+  for (let i = width - 1; i >= 0; i--) v = v * 256 + bytes[addr + i];
+  return v;
+}
+
+function valueToHexLE(value, width) {
+  let s = '';
+  for (let i = 0; i < width; i++) { s += (value & 0xFF).toString(16).padStart(2, '0'); value = Math.floor(value / 256); }
+  return s;
+}
+
+function parseNum(str) {
+  str = str.trim();
+  if (str === '') return NaN;
+  return str.toLowerCase().startsWith('0x') ? parseInt(str, 16) : parseInt(str, 10);
+}
+
+async function fetchRam() {
+  const bank = document.getElementById('bank').value || '0';
+  const view = document.getElementById('view').value;
+  const url = `/api/ram?addr=0&len=65536&bank=${bank}${view ? '&view=' + view : ''}`;
+  const r = await fetch(BASE + url);
+  if (!r.ok) throw new Error('RAM read failed: ' + r.status);
+  const j = await r.json();
+  return hexToBytes(j.hex);
+}
+
+async function writeRam(addr, value, width) {
+  const r = await fetch(BASE + '/api/ram', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ addr, data: valueToHexLE(value, width) })
+  });
+  if (!r.ok) throw new Error('write failed: ' + r.status);
+}
+
+// ── search state ────────────────────────────────────────────────────────────
+let g_width = 1;
+let g_candidates = null;   // array of addresses still in the running
+let g_scanSnapshot = null; // Uint8Array as of the last explicit scan (search anchor)
+let g_liveSnapshot = null; // Uint8Array from the live-values poller, display only
+let g_liveTimer = null;
+const g_freezeTimers = new Map(); // addr -> interval id
+
+function setSearchConfigEnabled(enabled) {
+  ['width','bank','view','addr-from','addr-to','init-mode','init-value'].forEach(id => {
+    document.getElementById(id).disabled = !enabled || (id === 'init-value' && document.getElementById('init-mode').value !== 'exact');
+  });
+  document.getElementById('btn-start').disabled = !enabled;
+}
+
+document.getElementById('init-mode').addEventListener('change', e => {
+  document.getElementById('init-value').disabled = e.target.value !== 'exact';
+});
+
+async function startSearch() {
+  g_width = parseInt(document.getElementById('width').value);
+  const from = parseNum(document.getElementById('addr-from').value);
+  const to   = parseNum(document.getElementById('addr-to').value);
+  const maxAddr = 65536 - g_width;
+  if (isNaN(from) || isNaN(to) || from < 0 || to > 65535 || from > to) {
+    alert('Invalid range'); return;
+  }
+  const initMode = document.getElementById('init-mode').value;
+  let target = NaN;
+  if (initMode === 'exact') {
+    target = parseNum(document.getElementById('init-value').value);
+    if (isNaN(target)) { alert('Enter the known value first'); return; }
+  }
+
+  let ram;
+  try { ram = await fetchRam(); } catch (e) { alert(e.message); return; }
+
+  const lastAddr = Math.min(to, maxAddr);
+  const cands = [];
+  for (let a = from; a <= lastAddr; a++) {
+    if (initMode === 'unknown' || valueAt(ram, a, g_width) === target) cands.push(a);
+  }
+
+  g_candidates = cands;
+  g_scanSnapshot = ram;
+  g_liveSnapshot = null;
+
+  setSearchConfigEnabled(false);
+  document.getElementById('btn-reset').disabled = false;
+  document.getElementById('filter').disabled = false;
+  document.getElementById('filter-value').disabled = false;
+  document.getElementById('btn-scan').disabled = false;
+  updateFilterUI();
+  renderResults();
+}
+
+function updateFilterUI() {
+  const f = document.getElementById('filter').value;
+  const needsValue = ['exact','increased_by','decreased_by','greater_than','less_than'].includes(f);
+  document.getElementById('filter-value').disabled = !needsValue;
+}
+
+async function nextScan() {
+  if (!g_candidates) return;
+  const filter = document.getElementById('filter').value;
+  const needsValue = ['exact','increased_by','decreased_by','greater_than','less_than'].includes(filter);
+  let val = NaN;
+  if (needsValue) {
+    val = parseNum(document.getElementById('filter-value').value);
+    if (isNaN(val)) { alert('Enter a value for this filter'); return; }
+  }
+
+  let ram;
+  try { ram = await fetchRam(); } catch (e) { alert(e.message); return; }
+
+  const keep = [];
+  for (const a of g_candidates) {
+    const oldV = valueAt(g_scanSnapshot, a, g_width);
+    const newV = valueAt(ram, a, g_width);
+    let ok;
+    switch (filter) {
+      case 'exact':        ok = newV === val; break;
+      case 'changed':      ok = newV !== oldV; break;
+      case 'unchanged':    ok = newV === oldV; break;
+      case 'increased':    ok = newV > oldV; break;
+      case 'decreased':    ok = newV < oldV; break;
+      case 'increased_by': ok = newV === oldV + val; break;
+      case 'decreased_by': ok = newV === oldV - val; break;
+      case 'greater_than': ok = newV > val; break;
+      case 'less_than':    ok = newV < val; break;
+    }
+    if (ok) keep.push(a);
+  }
+
+  g_candidates = keep;
+  g_scanSnapshot = ram;
+  g_liveSnapshot = null;
+  renderResults();
+}
+
+function resetSearch() {
+  g_candidates = null;
+  g_scanSnapshot = null;
+  g_liveSnapshot = null;
+  document.getElementById('live-values').checked = false;
+  toggleLive();
+  for (const [addr, id] of g_freezeTimers) clearInterval(id);
+  g_freezeTimers.clear();
+
+  setSearchConfigEnabled(true);
+  document.getElementById('init-value').disabled = document.getElementById('init-mode').value !== 'exact';
+  document.getElementById('btn-reset').disabled = true;
+  document.getElementById('filter').disabled = true;
+  document.getElementById('filter-value').disabled = true;
+  document.getElementById('btn-scan').disabled = true;
+  document.getElementById('count').textContent = '—';
+  document.getElementById('results-table').style.display = 'none';
+  document.getElementById('too-many').style.display = 'none';
+}
+
+// ── results table ────────────────────────────────────────────────────────────
+const RENDER_LIMIT = 300;
+
+function fmtAddr(a) { return '0x' + a.toString(16).toUpperCase().padStart(4, '0'); }
+function fmtVal(v, width) { return v + ' (0x' + v.toString(16).toUpperCase().padStart(width * 2, '0') + ')'; }
+
+function renderResults() {
+  if (!g_candidates) return;
+  document.getElementById('count').textContent = g_candidates.length;
+
+  const table = document.getElementById('results-table');
+  const tooMany = document.getElementById('too-many');
+  const body = document.getElementById('results-body');
+
+  if (g_candidates.length > RENDER_LIMIT) {
+    table.style.display = 'none';
+    tooMany.style.display = 'block';
+    tooMany.textContent = `${g_candidates.length} candidates — keep playing and scanning to narrow this below ${RENDER_LIMIT} before individual addresses are shown.`;
+    return;
+  }
+  tooMany.style.display = 'none';
+  table.style.display = g_candidates.length ? 'table' : 'none';
+  body.innerHTML = '';
+
+  const display = g_liveSnapshot || g_scanSnapshot;
+
+  for (const addr of g_candidates) {
+    const base = valueAt(g_scanSnapshot, addr, g_width);
+    const cur  = valueAt(display, addr, g_width);
+    const delta = cur - base;
+    const deltaCls = delta > 0 ? 'delta-up' : delta < 0 ? 'delta-down' : '';
+    const deltaStr = delta > 0 ? '+' + delta : String(delta);
+    const frozen = g_freezeTimers.has(addr);
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="mono">${fmtAddr(addr)}</td>
+      <td class="mono">${fmtVal(base, g_width)}</td>
+      <td class="mono">${fmtVal(cur, g_width)}</td>
+      <td class="mono ${deltaCls}">${deltaStr}</td>
+      <td><input id="poke-${addr}" value="${cur}" size="6"></td>
+      <td><button onclick="pokeAddr(${addr})">Write</button></td>
+      <td><button id="freeze-${addr}" class="${frozen ? 'frozen' : ''}" onclick="toggleFreeze(${addr})">${frozen ? 'Unfreeze' : 'Freeze'}</button></td>
+    `;
+    body.appendChild(tr);
+  }
+}
+
+async function pokeAddr(addr) {
+  const input = document.getElementById('poke-' + addr);
+  const val = parseNum(input.value);
+  if (isNaN(val)) { alert('Invalid value'); return; }
+  try { await writeRam(addr, val, g_width); } catch (e) { alert(e.message); }
+}
+
+function toggleFreeze(addr) {
+  const btn = document.getElementById('freeze-' + addr);
+  if (g_freezeTimers.has(addr)) {
+    clearInterval(g_freezeTimers.get(addr));
+    g_freezeTimers.delete(addr);
+    btn.classList.remove('frozen');
+    btn.textContent = 'Freeze';
+    return;
+  }
+  const input = document.getElementById('poke-' + addr);
+  const val = parseNum(input.value);
+  if (isNaN(val)) { alert('Invalid value'); return; }
+  const id = setInterval(() => writeRam(addr, val, g_width).catch(() => {}), 150);
+  g_freezeTimers.set(addr, id);
+  btn.classList.add('frozen');
+  btn.textContent = 'Unfreeze';
+}
+
+function toggleLive() {
+  const on = document.getElementById('live-values').checked;
+  if (g_liveTimer) { clearInterval(g_liveTimer); g_liveTimer = null; }
+  if (on && g_candidates) {
+    g_liveTimer = setInterval(async () => {
+      try { g_liveSnapshot = await fetchRam(); renderResults(); } catch (e) { /* transient */ }
+    }, 1000);
+  } else {
+    g_liveSnapshot = null;
+  }
+}
+
+checkStatus();
+refreshScreen();
+</script>
+</body>
+</html>
