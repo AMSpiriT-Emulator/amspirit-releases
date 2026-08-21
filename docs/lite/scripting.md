@@ -38,7 +38,11 @@ curl http://127.0.0.1:8765/api/script
 curl -X DELETE http://127.0.0.1:8765/api/script
 ```
 
-The embedded debug interface (accessible at `http://127.0.0.1:8765`) has a Script panel with editor, CSL/Lua selector, and Execute / Stop buttons.
+The embedded interface (accessible at `http://127.0.0.1:8765`) has a Script panel with editor, CSL/Lua selector, and Execute / Stop buttons.
+
+> Scripts sent through the web API are **sandboxed** — see
+> [Trust levels and the sandbox](#trust-levels-and-the-sandbox). Scripts loaded
+> from the command line or by drag & drop are not.
 
 ---
 
@@ -81,6 +85,27 @@ wait_driveonoff(n)   -- wait N drive motor ON/OFF cycles (default 1)
 wait_ssm0000()       -- wait for the ED 00 ED 00 sequence in the Z80
 ```
 
+### SSM Codes (Software Stepping Mechanism)
+
+The Z80 core reports unrecognised opcodes; SSM intercepts specific pairs of
+`ED xx` opcodes emitted by the running program to trigger actions. Every SSM
+code is a 4-byte sequence: a first `ED xx` pair naming the code, confirmed by
+a second pair (`ED FF`, except `#0000` which is confirmed by `ED 00`):
+
+| Code | Bytes | Effect |
+|---|---|---|
+| `#0000` | `ED 00 ED 00` | Unblocks a pending `wait_ssm0000()` |
+| `#FFFF` | `ED FF ED FF` | Saves a snapshot — named by `snapshot_name`, else `AMSPIRIT_<crtc>_FFFF.sna` |
+| `#FFFE` | `ED FE ED FF` | Saves a screenshot — named by `screenshot_name`, else `AMSPIRIT_<crtc>_FFFE.png` |
+| `#FFFD` | `ED FD ED FF` | Marks the start of an event-logging window (records the global NOP tick counter) |
+| `#FFFC` | `ED FC ED FF` | Logs the number of NOPs executed since the last `#FFFD` mark (no file written; feeds trace tools like `snatool`) |
+
+SSM mode must be active for these codes to be intercepted — enabled
+automatically when a script calls `wait_ssm0000()`, or manually with
+`--ssm` (`--ssm-both` makes either `#FFFF` or `#FFFE` save both a snapshot
+and a screenshot). Full protocol reference: `docs/csl_specs.md` at the
+workspace root.
+
 ### Machine Control
 
 ```lua
@@ -104,6 +129,8 @@ tape_stop()
 tape_rewind()
 snapshot_load(path)          -- load an SNA snapshot
 snapshot_dir(path)
+snapshot()                   -- save a snapshot (name/directory configurable)
+snapshot_name(name)          -- filename without extension
 ```
 
 ### Keyboard
@@ -148,7 +175,169 @@ csl_load(path)               -- load and execute a CSL/Lua file synchronously
 ```lua
 csl_version(str)             -- log the script version (informational)
 poke(addr, value)            -- write a byte to CPC RAM
+print(...)                   -- tab-separated, like standard Lua
 ```
+
+`print()` goes to the emulator log (`[lua] …`) rather than straight to stdout,
+and is also captured so a caller can read it back. The capture is capped at
+64 KiB per script; past that it ends with `[output truncated]`.
+
+---
+
+## Interactive console
+
+A script is a file you run from the top. An eval is one line at a time, on a
+**persistent** Lua state — globals stay put between lines, which is what makes
+a console a console.
+
+### The page
+
+With the web server running, open **<http://127.0.0.1:8765/console>** (or the
+`>_ Console` button in the debug UI's Script tab). It also works opened straight
+from disk — `src/assets/amspirit-lite-console.html`, or next to the binary in a
+release build.
+
+- <kbd>Enter</kbd> runs the line, <kbd>Shift</kbd>+<kbd>Enter</kbd> adds a line
+  for a multi-line chunk.
+- <kbd>↑</kbd> / <kbd>↓</kbd> walk the history (kept in the browser, 200 lines).
+- <kbd>Tab</kbd> completes. The candidates are asked of the **live Lua state**,
+  not a hardcoded list, so they include the variables you just defined and can
+  never drift from the engine's real API.
+- <kbd>Ctrl</kbd>+<kbd>L</kbd> clears the transcript; **Reset session** forgets
+  the globals.
+- The **API panel** on the right is a filterable index of the scripting API —
+  signature plus one line each; click a name to insert it. It reconciles itself
+  against the live Lua state on load, so a function it lists that the engine no
+  longer exposes is struck out, and one the engine exposes that the panel does
+  not know about lands in an *Undocumented* group. The panel therefore cannot
+  quietly fall behind the engine. Toggle it with the **API** button.
+
+For the emulator's state — screen, registers, memory, disassembly — open the
+debug UI in another tab (the **Debug UI ↗** button); the console deliberately
+does not duplicate it.
+
+### The endpoint
+
+
+```bash
+# One line, then read the answer back
+curl -X POST http://127.0.0.1:8765/api/eval --data-binary 'x = cpc.getZ80().PC'
+# → {"ok":true,"seq":1}
+curl 'http://127.0.0.1:8765/api/eval?seq=1'
+# → {"seq":1,"known":true,"done":true,"refused":false,"value":"","output":"","error":""}
+
+curl -X POST http://127.0.0.1:8765/api/eval --data-binary 'string.format("%04X", x)'
+# → {"ok":true,"seq":2}
+curl 'http://127.0.0.1:8765/api/eval?seq=2'
+# → {"seq":2,...,"value":"9508",...}
+
+# Forget the accumulated globals
+curl -X DELETE http://127.0.0.1:8765/api/eval
+```
+
+Things worth knowing:
+
+- **A bare expression works.** The chunk is compiled as `return <line>` first
+  and falls back to the line as written, like the stock `lua` REPL, so
+  `1 + 1` reports `value = "2"` rather than being a syntax error.
+- **`print()` comes back** in `output`, instead of disappearing into the
+  process's stdout.
+- **`wait()` works.** An eval runs on the same frame-by-frame coroutine as a
+  script, so `wait_frames(50)` is legal — `done` stays `false` until it
+  finishes. The flip side: there is one wait slot, so an eval sent while
+  something else is running is refused — normally right away, as a `400` on the
+  POST, and only in a rare race as `refused: true` on the poll.
+- **Lua only.** The CSL preprocessor is a file format; `/api/eval` takes the
+  body verbatim.
+- **Sandboxed** like `/api/script` (below).
+- **Running a script wipes the console's globals** — a script load is a fresh
+  start, by design.
+
+Full endpoint contract: [web_server_api.md](web_server_api.md#post-apieval).
+
+---
+
+## Trust levels and the sandbox
+
+Where a script came from decides what it is allowed to touch.
+
+| Origin | Trust | Lua stdlib |
+|---|---|---|
+| `--script file.lua`, drag & drop | Local | **complete** |
+| `POST /api/script`, the web UI Script panel | Network | **sandboxed** |
+
+The reason is the transport, not the language. The debug server answers on
+127.0.0.1 with `Access-Control-Allow-Origin: *` and no token, so *any* page
+open in your browser can POST a script while the emulator is running. With the
+full stdlib available, that is `os.execute` on your machine. A file you passed
+on the command line is your own code and is left alone.
+
+What the sandbox removes:
+
+| Removed | |
+|---|---|
+| `io` | replaced by the jailed `fs.*` below |
+| `package`, `require` | no module loading |
+| `debug` | `debug.getregistry()` would hand back everything else that was removed |
+| `dofile`, `loadfile` | read arbitrary paths |
+| `os.execute`, `os.remove`, `os.rename`, `os.exit`, `os.tmpname`, `os.getenv`, `os.setlocale` | pruned **per function** — `os.time`, `os.clock`, `os.date`, `os.difftime` stay, so timing a routine still works |
+| `string.dump`, and `load()` limited to text chunks | Lua 5.4 has no bytecode verifier: a forged binary chunk can subvert the VM |
+
+Everything else is untouched — `string`, `table`, `math`, `coroutine`, and the
+whole CSL / `cpc` / `amspirit` / `fs` API.
+
+This is defence in depth, not a proof: a bug in the Lua VM itself would go
+around it. What it does close is the drive-by case.
+
+### Lifting the sandbox
+
+```bash
+amspirit-lite-sdl --web-server --lua-full-stdlib
+```
+
+Off by default. With it, scripts arriving over the web API get the full stdlib,
+and the emulator logs a warning at startup. Only on a machine you trust.
+
+---
+
+## File access — `fs.*`
+
+Saving a file is the first thing you want from a script, so the sandbox does not
+remove the capability — it narrows it to one directory. `fs.*` is available at
+**both** trust levels (a local script that wants free rein uses `io` instead).
+
+```lua
+fs.write(name, data)         -- write (binary-safe); → true, or nil, err
+fs.append(name, data)        -- append
+fs.read(name)                -- → contents, or nil, err
+fs.exists(name)              -- → boolean
+fs.remove(name)              -- delete; → true, or nil, err
+fs.root()                    -- → the absolute root directory
+```
+
+The root is `<config dir>/scripts` (see `-C` / `--config`), created on first
+write, along with any subdirectory a name asks for. Paths are relative to it,
+with `/` as the separator; subdirectories are fine. Refused: absolute paths,
+`..` as a path component, `\` separators, embedded NULs, and empty names.
+
+```lua
+-- Dump the BASIC listing next to the config, then read it back
+local src = cpc.exportBasic()
+local ok, err = fs.write("listing.bas", src)
+if not ok then print("save failed: " .. err) end
+print(fs.root() .. "/listing.bas")
+```
+
+Errors come back the Lua way — `nil` plus a message — so a failed write never
+aborts the script by itself:
+
+```lua
+local ok, err = fs.write("../escape.txt", "x")
+-- ok == nil, err == "'..' is not allowed in fs.* paths"
+```
+
+`csl_load()` resolves through the same root when the script is sandboxed, and
+takes any path when it is not.
 
 ---
 
@@ -185,7 +374,8 @@ repeat
   cpc.waitFrames(1)
   local z = cpc.getZ80()
 until z.PC == 0xBB00
-cpc.screenshot("result")
+screenshot_name("result")
+screenshot()
 ```
 
 ### RAM
@@ -288,8 +478,19 @@ local cfg = amspirit.getConfig()
 -- cfg.extended_ram : extended RAM (0 = none)
 
 amspirit.screenshot(dir, name)
--- equivalent to screenshot_dir(dir) + screenshot_name(name) + screenshot()
+-- equivalent to screenshot_dir(dir) + screenshot_name(name) + screenshot():
+-- both arguments are optional and each one, when given, also updates the
+-- corresponding state for later screenshot() calls.
+amspirit.screenshot("./results", "pass")  -- ./results/pass.png
+amspirit.screenshot("./results")          -- keeps the current name
+amspirit.screenshot()                     -- exactly like screenshot()
 ```
+
+> The directory must exist. A screenshot is first written in the process's working
+> directory and then moved, with a copy+delete fallback when the destination is on
+> another filesystem (`/tmp` vs the project, typically) — that move used to be an
+> unchecked `rename()`, so the file silently stayed in the cwd under its
+> timestamped name while the script reported success.
 
 ---
 

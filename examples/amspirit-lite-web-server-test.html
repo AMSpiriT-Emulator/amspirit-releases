@@ -94,6 +94,40 @@ textarea{resize:vertical;min-height:48px;width:100%}
   </div>
 </div>
 
+<!-- ======================= SELF-DOCUMENTATION ======================= -->
+<h2>Self-Documentation — /api/doc</h2>
+
+<!-- /api/doc -->
+<div class="endpoint GET">
+  <div class="req-line">
+    <span class="method">GET</span>
+    <span class="url">/api/doc</span>
+  </div>
+  <div class="body-preview">List every documented endpoint (path, HTTP methods, one-line summary). Machine-readable contract for the whole API below — source of truth: amspirit-helpers/src/web_doc.cpp.</div>
+  <div class="controls">
+    <button onclick="runGet('/api/doc','resp-doc-list')">Send</button>
+    <span id="badge-doc-list"></span>
+  </div>
+  <div class="resp" id="resp-doc-list">—</div>
+</div>
+
+<!-- /api/doc/<name> -->
+<div class="endpoint GET">
+  <div class="req-line">
+    <span class="method">GET</span>
+    <span class="url">/api/doc/&lt;name&gt;</span>
+  </div>
+  <div class="body-preview">Detail for one endpoint (all its HTTP methods): params (query/body, type, required/default) and response shape. &lt;name&gt; is the path segment under /api/, e.g. "config" for /api/config.</div>
+  <div class="param-row">
+    <label>name</label><input id="doc-detail-name" value="config" size="16" placeholder="e.g. config, ram, keymap">
+  </div>
+  <div class="controls">
+    <button onclick="runApiDocDetail()">Send</button>
+    <span id="badge-doc-detail"></span>
+  </div>
+  <div class="resp" id="resp-doc-detail">—</div>
+</div>
+
 <!-- ======================= GET ENDPOINTS ======================= -->
 <h2>GET Endpoints</h2>
 
@@ -506,7 +540,7 @@ textarea{resize:vertical;min-height:48px;width:100%}
     <span class="method">POST</span>
     <span class="url">/api/ram</span>
   </div>
-  <div class="body-preview">Write bytes to CPC RAM. data = hex string. exec=true → also set PC to entry.</div>
+  <div class="body-preview">Write bytes to CPC RAM. data = hex string. exec=true → also set PC to entry. Queued (several calls in the same tick all apply, in order) — response includes a "seq"; poll /api/state's emu.ram_apply_seq until it reaches that value before trusting a readback.</div>
   <div class="param-row">
     <label>addr</label><input id="ram-write-addr" value="32768" size="8">
     <label>data (hex)</label><input id="ram-write-data" value="3E 0A D3 F5" size="24" placeholder="space-separated hex bytes">
@@ -526,7 +560,7 @@ textarea{resize:vertical;min-height:48px;width:100%}
     <span class="method">POST</span>
     <span class="url">/api/exec</span>
   </div>
-  <div class="body-preview">Set Z80 PC to addr and resume execution (no RAM write)</div>
+  <div class="body-preview">Set Z80 PC to addr and resume execution (no RAM write). Same queue/"seq" contract as POST /api/ram above.</div>
   <div class="param-row">
     <label>addr</label><input id="exec-addr" value="32768" size="8">
   </div>
@@ -799,6 +833,11 @@ function runRamWrite() {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({addr, data, exec, entry})
   }, 'resp-ram-post', 'ram-post');
+}
+
+function runApiDocDetail() {
+  const name = document.getElementById('doc-detail-name').value.trim();
+  doFetch(`/api/doc/${name}`, {}, 'resp-doc-detail', 'doc-detail');
 }
 
 function runBasicExport() {

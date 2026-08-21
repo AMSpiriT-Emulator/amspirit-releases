@@ -2,6 +2,18 @@
 
 Files: `amspirit-helpers/inc/web_server.h`, `amspirit-helpers/src/web_server.cpp`
 
+This file is the narrative companion to the machine-readable API contract
+served by the API itself at `GET /api/doc` (list of endpoints) and
+`GET /api/doc/<name>` (per-endpoint method/params/response shape, `<name>`
+being the path under `/api/`, e.g. `/api/doc/config` for `/api/config`). The
+source of truth for that structured contract is the table in
+`amspirit-helpers/src/web_doc.cpp` — this markdown keeps the behavioral
+nuance and gotchas (SHIFT stickiness, `CPC_COUNTRY`, caveats, full curl
+examples) that don't reduce to structured data. **The two do not
+auto-sync**: when adding or changing an endpoint, update the entry in
+`web_doc.cpp`, the corresponding section below, and, if the endpoint is
+wrapped there, `tools/mcp-emulator/server.py`.
+
 ## Overview
 
 Minimal HTTP server started automatically by `amspirit-lite-sdl` and the Qt
@@ -35,6 +47,8 @@ as long as the server is running.
 | `p_ui_lang` | `std::string*` | `nullptr` | Pointer to current UI language code (en/fr/es/de) |
 | `mtx` | `std::mutex` | — | Internal lock shared between server thread and main thread |
 | `pending` | `WebPending` | — | Pending command (do not access directly, use `web_server_poll`) |
+| `script_status` | `WebScriptStatus` | — | Scripting engine state (running / last error / `print()` capture), published each frame by `web_eval_tick` |
+| `eval` | `WebEvalState` | — | Interactive-eval request **and** result slot — the one request/response route; driven by `web_eval_tick` |
 | `audio_ring` | `AudioRing*` | `nullptr` | Audio recording ring buffer (init with `web_audio_ring_init`) |
 | `frames` | `std::atomic<uint64_t>` | `0` | Completed emulated video frames; the frontend must bump this once per frame — source of `emu.frames` |
 | `autotype_remaining` | `std::atomic<int>` | `0` | Characters/VK presses left to deliver, updated by the frontend each frame — source of `emu.autotyping`/`emu.autotype_remaining` |
@@ -59,8 +73,7 @@ Consumed by `web_server_poll`.
 | `do_hard_reset` | `bool` | Request a hard reset |
 | `set_pause` | `bool` | `true` if `pause_val` should be applied |
 | `pause_val` | `bool` | New pause state requested |
-| `do_ram_write` | `bool` | A RAM write/execute is pending |
-| `ram_write` | `WebRamWrite` | Details of the RAM write (see below) |
+| `ram_writes` | `std::vector<WebRamWrite>` | Queued RAM write/execute requests, applied in order (see below) |
 | `autotype_string` | `std::string` | Non-empty = autotype this text (appended on successive calls) |
 | `vk_presses` | `std::vector<uint16_t>` | Raw CPC VK codes to press and release |
 | `script_text` | `std::string` | Non-empty = run this CSL or Lua script |
@@ -120,6 +133,21 @@ Consumed by `web_server_poll`.
 | `exec` | `bool` | If `true`, redirect the PC to `entry` after the write |
 | `entry` | `uint16_t` | Target PC when `exec == true` (default = `addr`) |
 | `bank` | `int` | `0` = central RAM; `1..N` = extended-RAM page `N−1` |
+
+`POST /api/ram` and `POST /api/exec` each push one `WebRamWrite` onto
+`WebPending::ram_writes` rather than overwriting a single slot: several calls
+landing in the same poll tick used to silently coalesce onto one overwritable
+field, dropping every write but the last with no error (`{"ok":true}`
+regardless). `web_dispatch_apply` now applies the whole queue in FIFO order.
+
+Each call also returns a `seq` in its `{"ok":true,"seq":N}` response — the
+value `GET /api/state`'s `emu.ram_apply_seq` will hold once that specific
+write has actually been applied by the main thread. The old contract
+acknowledged the request as soon as it was queued, not once applied, so a
+client reading RAM back immediately after `{"ok":true}` could race the main
+loop (worse for larger payloads / higher system load, with no fixed size
+threshold). Poll `ram_apply_seq` until it is `>= seq` before trusting a
+readback instead of blind retry-and-verify.
 
 ---
 
@@ -359,7 +387,8 @@ Direct read without lock (display-only data, accepts slight inconsistency).
     "tl_active": false,
     "tl_steps_back": 0,
     "tl_steps_fwd": 0,
-    "tl_step_kind": "frame"
+    "tl_step_kind": "frame",
+    "ram_apply_seq": 0
   }
 }
 ```
@@ -400,6 +429,7 @@ Direct read without lock (display-only data, accepts slight inconsistency).
 | `emu` | `tl_active` | `true` if the timelapse is enabled and has at least one snapshot |
 | `emu` | `tl_steps_back` / `tl_steps_fwd` | Steps available to navigate the timelapse backward/forward (context-filtered to `tl_step_kind`) |
 | `emu` | `tl_step_kind` | Current step-context kind: `"frame"`, `"basic"`, or `"z80"` |
+| `emu` | `ram_apply_seq` | Bumped once per queued `WebRamWrite` actually applied by the main thread; compare against the `seq` a `POST /api/ram`/`/api/exec` response returned before trusting a readback (see `WebRamWrite` above) |
 
 ---
 
@@ -584,7 +614,12 @@ Executed by `web_server_poll` at the next loop iteration.
 
 `data` empty + `exec: true` = simple PC redirection without write.
 
-**Response**: `200 application/json` — `{"ok":true}`
+Queued rather than applied in place: several calls landing in the same poll
+tick are all kept and applied in order (see `WebRamWrite` above).
+
+**Response**: `200 application/json` — `{"ok":true,"seq":N}`, where `N` is the
+value `GET /api/state`'s `emu.ram_apply_seq` will reach once this write has
+actually been applied — poll it instead of immediately reading RAM back.
 
 ---
 
@@ -599,7 +634,7 @@ Shortcut equivalent to `POST /api/ram` with empty `data` and `exec: true`.
 {"addr": 4096}
 ```
 
-**Response**: `200 application/json` — `{"ok":true}`
+**Response**: `200 application/json` — `{"ok":true,"seq":N}` (same `ram_apply_seq` contract as `POST /api/ram` above)
 
 ---
 
@@ -853,6 +888,7 @@ Returns the current state of the CSL/Lua scripting engine.
 |---|---|
 | `running` | `true` if a script is currently running |
 | `error` | Error message from the last script, empty if no error |
+| `output` | Everything `print()` produced, newline-separated (capped at 64 KiB, then `[output truncated]`) |
 
 ```bash
 curl http://127.0.0.1:8765/api/script
@@ -867,6 +903,16 @@ The request body is the raw source of the script.
 By default the language is CSL (macro-language style Locomotive BASIC).  
 Add `?lang=lua` for raw Lua 5.4.
 
+> **Sandboxed.** A script arriving here did not necessarily come from you: the
+> server answers with `Access-Control-Allow-Origin: *` and no token, so any page
+> open in your browser can POST one. It therefore runs with a pruned stdlib —
+> no `io`, `package`, `debug`, `require`, `dofile`, `loadfile`, no
+> `os.execute`/`getenv`/`remove`/`rename`/`exit`, `load()` restricted to text
+> chunks. Files go through the jailed `fs.*` table (see
+> [scripting.md](scripting.md#file-access--fs)). A script loaded locally
+> (`--script`, drag & drop) keeps the full stdlib. Start the emulator with
+> `--lua-full-stdlib` to give network scripts the full stdlib too.
+
 ```bash
 # CSL script
 curl -X POST 'http://127.0.0.1:8765/api/script' \
@@ -877,6 +923,97 @@ curl -X POST 'http://127.0.0.1:8765/api/script' \
 curl -X POST 'http://127.0.0.1:8765/api/script?lang=lua' \
      -H 'Content-Type: text/plain' \
      --data-binary @myscript.lua
+```
+
+**Response**: `200 application/json` — `{"ok":true}`
+
+---
+
+### `GET /console`
+
+Serves `amspirit-lite-console.html` — the interactive Lua console — taken from
+the **same directory** as the `--web-html` UI file. No separate option: the two
+pages travel together in every package, so a second path to keep in sync would
+only be a second thing to get wrong. `404` with a hint if the file is not there.
+
+It is a page of its own rather than a tab of the debug UI: it reloads without
+disturbing the debugger's state and sits in a second browser tab beside it. The
+Script tab of the main UI links to it.
+
+The page also works opened straight from disk (`file://`) — it detects that and
+targets `http://127.0.0.1:8765` absolutely, like the other standalone pages in
+`src/assets/`.
+
+---
+
+### `POST /api/eval`
+
+Evaluates **one Lua chunk** on the *persistent* interactive state: globals set
+by one eval are still there for the next. This is the console endpoint.
+
+Unlike every other POST on this API, an eval has an **answer**, so this route is
+request/response: the POST issues a `seq`, and `GET /api/eval?seq=N` reads the
+outcome back. Same contract as `ram_write_seq` / `ram_apply_seq` — acking the
+queueing is not acking the result.
+
+The body is the chunk, taken verbatim: **no CSL preprocessing on this route**
+(CSL is a file format). A bare expression works — the chunk is tried as
+`return <body>` first, like the stock `lua` REPL — so its value comes back in
+`value`.
+
+Sandboxed exactly like `POST /api/script`.
+
+```bash
+curl -X POST http://127.0.0.1:8765/api/eval --data-binary 'cpc.getZ80().PC'
+# -> {"ok":true,"seq":1}
+```
+
+**Response**: `200 application/json` — `{"ok":true,"seq":<n>}`
+
+`400` is returned rather than a `seq` when:
+
+- an eval is **already queued** — overwriting it would lose the first line's
+  result before anyone could read it;
+- a script or eval is **still running** (`busy: …`). Accepting it would issue a
+  `seq` the main thread could only reject, and that rejection would land on the
+  running eval's result slot.
+
+So `refused: true` on `GET /api/eval` is the rare race, not the normal path:
+the check above reads a flag published once per frame.
+
+---
+
+### `GET /api/eval?seq=N`
+
+Reads the outcome of eval `N`.
+
+```bash
+curl 'http://127.0.0.1:8765/api/eval?seq=1'
+# -> {"seq":1,"known":true,"done":true,"refused":false,
+#     "value":"38130","output":"","error":""}
+```
+
+| Field | Description |
+|---|---|
+| `known` | `false` = that seq is gone (a later eval superseded it), or was never issued |
+| `done` | `false` while the chunk is **queued or running** — the main thread picks a request up on its next frame, and an eval may then `wait()` across further frames, so the first poll after the POST normally answers `known:true, done:false` |
+| `refused` | `true` = the engine was busy (a script or another eval owns the frame loop) and **nothing ran** |
+| `value` | Formatted return values, tab-separated; empty when the chunk returned nothing |
+| `output` | `print()` capture, same cap as `/api/script` |
+| `error` | Parse or runtime error, empty on success |
+
+**Response**: `200 application/json`. Missing or non-positive `seq` → `400`.
+
+---
+
+### `DELETE /api/eval`
+
+Drops the persistent interactive state — the console's "clear session". The
+globals built up by previous evals are lost. Refused (logged, not an HTTP
+error) if something is still running.
+
+```bash
+curl -X DELETE http://127.0.0.1:8765/api/eval
 ```
 
 **Response**: `200 application/json` — `{"ok":true}`
@@ -1572,9 +1709,13 @@ curl -X POST http://127.0.0.1:8765/api/keymap \
 | POST | `/api/basic_bp` | Set the BASIC line-breakpoint set (comma-separated line numbers) |
 | POST | `/api/basic_runto?line=N` / `?addr=N` | Run to a BASIC line / statement, then pause |
 | GET | `/api/scan_ptr` | Diagnostic: find RAM words pointing into the BASIC program |
-| GET | `/api/script` | CSL/Lua scripting engine state |
-| POST | `/api/script[?lang=lua]` | Launch a CSL or Lua script |
+| GET | `/console` | Interactive Lua console page (see below) |
+| GET | `/api/script` | CSL/Lua scripting engine state + `print()` capture |
+| POST | `/api/script[?lang=lua]` | Launch a CSL or Lua script (sandboxed) |
 | DELETE | `/api/script` | Stop the current script |
+| POST | `/api/eval` | Evaluate one Lua chunk on the persistent state; returns a `seq` |
+| GET | `/api/eval?seq=N` | Outcome of eval `N` (value / output / error) |
+| DELETE | `/api/eval` | Drop the persistent interactive state |
 
 ---
 
@@ -1601,14 +1742,21 @@ while (!quit) {
         if (pending.cpc_model != 0xFF || pending.crtc_type != 0xFF) {
             // apply the new model / CRTC then reset
         }
-        if (pending.do_ram_write) {
+        // Applied in FIFO order: several requests queued in the same tick must
+        // all land, not coalesce onto a single overwritable slot.
+        for (const WebRamWrite& w : pending.ram_writes) {
             uint8_t* ram = emu_state.Memory_RAM;
-            for (size_t i = 0; i < pending.ram_write.data.size(); ++i)
-                ram[pending.ram_write.addr + i] = pending.ram_write.data[i];
-            if (pending.ram_write.exec)
-                Core_z80_Write_Register(CORE_Z80_REGISTRE_PC, pending.ram_write.entry);
+            for (size_t i = 0; i < w.data.size(); ++i)
+                ram[w.addr + i] = w.data[i];
+            if (w.exec)
+                Core_z80_Write_Register(CORE_Z80_REGISTRE_PC, w.entry);
+            ws_opts.ram_apply_seq.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Runs a queued POST /api/eval and publishes what GET /api/script and
+    // GET /api/eval serve. Once per frame, outside the poll: unlike the
+    // requests above, an eval has a result the web thread reads back later.
+    web_eval_tick(ws_opts, g_csl_script, emu_params, emu_state, params, cbs);
     // ... emulation frame ...
 }
 
