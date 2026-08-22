@@ -59,10 +59,10 @@ class HeatmapTab(ttk.Frame):
         self._build()
         self._live = ThreadSafeMirror(self._live_var, False)
         self._bank = ThreadSafeMirror(self._bank_var, self._bank_var.get())
-        app.poller.register(
-            "heatmap_tick", 1000, self._tick_fetch, self._tick_apply,
-            active=lambda: self._live.value and app.is_tab_active("heatmap")(),
-        )
+        # Ticking used to run on its own 1s timer; now it's paced by the SSE
+        # "frame" push instead, same as amspirit-lite.html's hmTick() call
+        # from its frame listener.
+        app.on_sse("frame", self._on_frame)
 
     def _build(self):
         top = ttk.Frame(self)
@@ -81,8 +81,8 @@ class HeatmapTab(ttk.Frame):
         ttk.Combobox(top, textvariable=self._decay_var, values=["0.80", "0.92", "0.98", "1.00"], width=6,
                      state="readonly").pack(side=tk.LEFT, padx=(2, 10))
         self._live_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(top, text="Live (1s tick)", variable=self._live_var).pack(side=tk.LEFT)
-        ttk.Button(top, text="Tick once", command=lambda: self.app.poller.trigger("heatmap_tick")).pack(
+        ttk.Checkbutton(top, text="Live", variable=self._live_var).pack(side=tk.LEFT)
+        ttk.Button(top, text="Tick once", command=self._tick_once).pack(
             side=tk.LEFT, padx=(8, 0)
         )
         ttk.Button(top, text="Clear", command=self._clear).pack(side=tk.LEFT, padx=(8, 0))
@@ -114,6 +114,13 @@ class HeatmapTab(ttk.Frame):
         self._heat = array.array("f", [0.0]) * 65536
         self._prev = None
         self._render()
+
+    def _on_frame(self, _data):
+        if self._live.value and self.app.is_tab_active("heatmap")():
+            self._tick_once()
+
+    def _tick_once(self):
+        self.app.run_async(self._tick_fetch, self._tick_apply)
 
     def _tick_fetch(self):
         bank = self._bank.value

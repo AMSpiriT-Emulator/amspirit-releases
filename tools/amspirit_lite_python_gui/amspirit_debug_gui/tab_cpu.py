@@ -32,10 +32,14 @@ class CpuTab(ttk.Frame):
 
         self._live_screen = ThreadSafeMirror(self._live_screen_var, False)
 
-        app.poller.register("cpu_z80", 500, lambda: app.client.get("/api/z80"), self._on_z80,
-                              active=app.is_tab_active("cpu"))
-        app.poller.register("cpu_screen", 500, self._fetch_screenshot, self._on_screenshot,
-                              active=lambda: self._live_screen.value and app.is_tab_active("cpu")())
+        # Registers/screen used to poll on their own 500ms timers; now they're
+        # paced by the emulator's own SSE "frame" push (~5Hz) instead, same as
+        # amspirit-lite.html's refreshCPU()/refreshScreen() calls from its
+        # frame listener. "z80_bp" adds an immediate refresh on breakpoint hit
+        # rather than waiting for the next frame tick.
+        app.on_sse("frame", self._on_frame)
+        app.on_sse("z80_bp", self._on_z80_bp)
+        self._refresh_z80()
 
     # -- layout ----------------------------------------------------------------
 
@@ -211,8 +215,8 @@ class CpuTab(ttk.Frame):
         top = ttk.Frame(frame)
         top.pack(side=tk.TOP, fill=tk.X)
         self._live_screen_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(top, text="Live refresh (500ms)", variable=self._live_screen_var).pack(side=tk.LEFT)
-        ttk.Button(top, text="Refresh once", command=lambda: self.app.poller.trigger("cpu_screen")).pack(
+        ttk.Checkbutton(top, text="Live refresh", variable=self._live_screen_var).pack(side=tk.LEFT)
+        ttk.Button(top, text="Refresh once", command=self._refresh_screenshot).pack(
             side=tk.LEFT, padx=(8, 0)
         )
         ttk.Button(top, text="Disarm raster breakpoint", command=self._disarm_raster_bp).pack(
@@ -230,6 +234,24 @@ class CpuTab(ttk.Frame):
         return frame
 
     # -- registers ---------------------------------------------------------
+
+    def _on_frame(self, _data):
+        """SSE "frame" (~5Hz): pace registers/screen refresh while this tab is open."""
+        if not self.app.is_tab_active("cpu")():
+            return
+        self._refresh_z80()
+        if self._live_screen.value:
+            self._refresh_screenshot()
+
+    def _on_z80_bp(self, data):
+        """SSE "z80_bp": refresh immediately on breakpoint hit, don't wait for the next frame."""
+        pc = data.get("pc", "????")
+        self._reg_status_var.set(f"Z80 breakpoint @ {pc}")
+        self._refresh_z80()
+        self._refresh_screenshot()
+
+    def _refresh_z80(self):
+        self.app.run_async(lambda: self.app.client.get("/api/z80"), self._on_z80)
 
     def _on_z80(self, result, error):
         if error is not None:
@@ -253,7 +275,7 @@ class CpuTab(ttk.Frame):
                 self._reg_status_var.set(f"{verb} failed: {self.app.describe_error(error)}")
             else:
                 self._reg_status_var.set(verb)
-                self.app.poller.trigger("cpu_z80")
+                self._refresh_z80()
         return done
 
     # -- memory --------------------------------------------------------------
@@ -359,6 +381,9 @@ class CpuTab(ttk.Frame):
 
     def _fetch_screenshot(self):
         return self.app.client.get_raw("/api/screenshot?crop=1&full=1&live=0")
+
+    def _refresh_screenshot(self):
+        self.app.run_async(self._fetch_screenshot, self._on_screenshot)
 
     def _on_screenshot(self, result, error):
         if error is not None:

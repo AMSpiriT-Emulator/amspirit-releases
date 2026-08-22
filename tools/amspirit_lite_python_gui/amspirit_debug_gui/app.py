@@ -16,6 +16,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from amspirit_debug_gui.api_client import AmspiritClient, AmspiritApiError, AmspiritConnectionError
+from amspirit_debug_gui.sse_client import SseClient
 from amspirit_debug_gui.tab_audio import AudioTab
 from amspirit_debug_gui.tab_basic import BasicTab
 from amspirit_debug_gui.tab_config import ConfigTab
@@ -113,14 +114,56 @@ class DebugGuiApp(tk.Tk):
         self._tab_keys: list[str] = []
         self.active_tab_key = ""
 
+        # SSE setup happens before the notebook is built: tabs register their
+        # own on_sse() listeners (CPU registers/screen, audio waveform, heatmap
+        # ticks) from their __init__, which runs during _build_notebook().
+        self._sse_listeners: dict[str, list] = {}
+        self.sse = SseClient(lambda: self.client.base_url)
+
         self._build_connection_bar()
         self._build_notebook()
         self._build_status_bar()
 
+        # "ping" stays a slow (1s) fallback poll purely for connection health --
+        # same role it plays in amspirit-lite.html, which keeps its own
+        # setInterval(refresh, 1000) running alongside SSE. Everything that
+        # used to be its own fast poll timer (CPU registers/screen, audio
+        # waveform, heatmap ticks) is now paced by the SSE "frame" push
+        # instead -- see sse_client.py and each tab's app.on_sse("frame", ...).
         self.poller.register("ping", 1000, lambda: self.client.get("/api/ping"), self._on_ping)
         self.poller.trigger("ping")
 
+        self.on_sse("pause", self._on_sse_pause)
+        self.on_sse("__open__", lambda _data: self.poller.trigger("ping"))
+        self._drain_sse()
+
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # -- SSE (Server-Sent Events) ---------------------------------------------
+
+    def on_sse(self, topic: str, callback):
+        """Register `callback(data)` for every event of `topic` from /api/events.
+
+        `data` is the parsed JSON payload, except for the synthetic topics
+        "__open__" (data=None, stream established) and "__error__"
+        (data=None, connection lost) that SseClient also emits.
+        """
+        self._sse_listeners.setdefault(topic, []).append(callback)
+
+    def _drain_sse(self):
+        for topic, data, _error in self.sse.drain():
+            for callback in self._sse_listeners.get(topic, ()):
+                try:
+                    callback(data)
+                except Exception:
+                    pass  # a buggy tab listener must not kill the drain loop
+        self.after(50, self._drain_sse)
+
+    def _on_sse_pause(self, data):
+        # Immediate badge/button update -- no need to wait for the next
+        # 1s "ping" tick, same as amspirit-lite.html's own "pause" listener.
+        self._paused = bool(data.get("paused"))
+        self._pause_btn.configure(text="Resume" if self._paused else "Pause")
 
     # -- shared helpers used by tab modules ----------------------------------
 
@@ -181,6 +224,7 @@ class DebugGuiApp(tk.Tk):
             self.set_status("port must be an integer", error=True)
             return
         self.poller.trigger("ping")
+        self.sse.reconnect()
 
     def _on_ping(self, result, error):
         if error is not None:
@@ -303,4 +347,5 @@ class DebugGuiApp(tk.Tk):
 
     def _on_close(self):
         self.poller.stop()
+        self.sse.stop()
         self.destroy()

@@ -24,11 +24,10 @@ class AudioTab(ttk.Frame):
         self._build()
         self._live = ThreadSafeMirror(self._live_var, False)
         self._window = ThreadSafeMirror(self._window_var, self._window_var.get())
-        app.poller.register(
-            "audio_wave", 500,
-            lambda: app.client.get(f"/api/audio/record?seconds={self._window.value}"),
-            self._on_wave, active=lambda: self._live.value and app.is_tab_active("audio")(),
-        )
+        # Waveform used to poll its own 500ms timer; now it's paced by the SSE
+        # "frame" push (~5Hz), same as amspirit-lite.html's refreshAudio() call
+        # from its frame listener.
+        app.on_sse("frame", self._on_frame)
         app.poller.register(
             "audio_devices", 3000, lambda: app.client.get("/api/audio/devices"),
             self._on_devices, active=app.is_tab_active("audio"),
@@ -44,8 +43,8 @@ class AudioTab(ttk.Frame):
             side=tk.LEFT, padx=(2, 10)
         )
         self._live_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(top, text="Live refresh (500ms)", variable=self._live_var).pack(side=tk.LEFT)
-        ttk.Button(top, text="Refresh once", command=lambda: self.app.poller.trigger("audio_wave")).pack(
+        ttk.Checkbutton(top, text="Live refresh", variable=self._live_var).pack(side=tk.LEFT)
+        ttk.Button(top, text="Refresh once", command=self._refresh_wave).pack(
             side=tk.LEFT, padx=(8, 0)
         )
         ttk.Button(top, text="Save WAV…", command=self._save_wav).pack(side=tk.LEFT, padx=(8, 0))
@@ -72,6 +71,15 @@ class AudioTab(ttk.Frame):
 
         self._status_var = tk.StringVar()
         ttk.Label(self, textvariable=self._status_var, foreground="#555").pack(side=tk.TOP, anchor="w", pady=(8, 0))
+
+    def _on_frame(self, _data):
+        if self._live.value and self.app.is_tab_active("audio")():
+            self._refresh_wave()
+
+    def _refresh_wave(self):
+        self.app.run_async(
+            lambda: self.app.client.get(f"/api/audio/record?seconds={self._window.value}"), self._on_wave
+        )
 
     def _on_wave(self, result, error):
         self._canvas.delete("all")

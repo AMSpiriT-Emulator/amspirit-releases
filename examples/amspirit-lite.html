@@ -11,7 +11,13 @@ h1{color:#6af;font-size:1.1em;margin-bottom:10px}
 h2{color:#89b;font-size:.8em;text-transform:uppercase;letter-spacing:1px;
    border-bottom:1px solid #333;padding-bottom:2px;margin:10px 0 5px}
 .layout{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.panel{background:#252525;border:1px solid #383838;border-radius:3px;padding:10px}
+.panel{background:#252525;border:1px solid #383838;border-radius:3px;padding-left:10px;padding-right:10px;}
+/* Resizable panel content (native CSS `resize` handle): pull the box back
+   out over the panel's right padding so the resize grip stays flush with
+   the panel's own bottom-right corner instead of sitting 10px short of it —
+   then re-add the same padding on the box itself so its own content (text,
+   register grid…) keeps the intended breathing room from the true edge. */
+.panel-resize{margin-right:-10px;padding-right:10px}
 .panel.full{grid-column:1/-1}
 .regs{display:grid;grid-template-columns:1fr 1fr;gap:4px 14px}
 .reg{display:flex;gap:6px;align-items:baseline}
@@ -28,6 +34,7 @@ button:disabled,button:disabled:hover{opacity:0.35;cursor:default}
 button.red{background:#5a1a1a;border-color:#7a3a3a;color:#faa}
 button.red:hover{background:#6a2a2a}
 button.amber{background:#4a3a1a;border-color:#6a5a3a;color:#fc8}
+.h2-tabs button{padding:1px 8px}
 button.amber:hover{background:#5a4a2a}
 button.running{background:#1a4a2a;border-color:#3a7a3a;color:#6f9}
 button.running:disabled{background:#1a4a2a;border-color:#3a7a3a;color:#6f9;opacity:1}
@@ -96,7 +103,7 @@ label{color:#999}
   <span><span class="kv">FPS:</span> <span id="fps" class="rv">--.-</span></span>
   <span><span class="kv">Frame:</span> <span id="frame-ms" class="rv">--.- ms</span></span>
   <span><span class="kv">Model:</span> <span id="model-name" class="rv">--</span></span>
-  <span><span class="kv">CRTC:</span> <span id="crtc-type" class="rv">--</span></span>
+  <span><span class="rv">/ CRTC</span> <span id="crtc-type" class="rv">--</span></span>
   <button id="btn-pause" onclick="togglePause()" data-i18n="btn_pause">Pause</button>
   <button class="amber" onclick="doAction('soft')" data-i18n="btn_soft_reset">Soft Reset</button>
   <button class="red"   onclick="doAction('hard')" data-i18n="btn_hard_reset">Hard Reset</button>
@@ -248,31 +255,29 @@ label{color:#999}
     <button id="cpu-step" onclick="doStep()" disabled data-i18n="btn_step">Step &#9654;|</button>
     <button id="cpu-step-over" onclick="doStepOver()" disabled data-i18n="btn_step_over">Step Over &#9654;&#9654;</button>
     <button id="cpu-step-back" onclick="doTlBack()" disabled data-i18n="btn_step_back">&#9664;| Back</button>
-    <span style="margin-left:8px;border-left:1px solid #333;padding-left:8px">
-      <button onclick="disasmAnalyze()" data-i18n="btn_analyze">Analyze from PC</button>
-      <button onclick="disasmResetZones()" data-i18n="btn_reset_zones">Reset zones</button>
-    </span>
-    <span style="margin-left:8px;border-left:1px solid #333;padding-left:8px">
-      <button onclick="disasmGotoPC()" data-i18n="btn_goto_pc">&#9656; PC</button>
-      <span class="kv" data-i18n="lbl_address">Address</span>
-      <input id="disasm-goto" type="text" value="0000" maxlength="4"
-             onkeydown="if(event.key==='Enter')disasmGoto()"
-             style="width:4em;background:#2a2a2a;color:#ce8;border:1px solid #444;
-                    border-radius:2px;padding:1px 4px;font:inherit;text-transform:uppercase">
-      <button onclick="disasmGoto()">&#9656;</button>
-    </span>
   </div>
   <div id="cpu-memmap" style="font-size:.78em;margin-bottom:8px;line-height:1.9"></div>
   <!-- Z80 registers + mini circuits tabs -->
   <div style="display:flex;gap:8px;margin-bottom:8px">
     <div class="panel" style="flex-shrink:0">
       <h2 data-i18n="h_z80">Z80</h2>
-      <div class="regs" id="z80-regs"></div>
+      <div id="z80-body" class="panel-resize" style="display:flex;flex-direction:column;
+           resize:vertical;overflow:auto;height:405px;min-height:200px">
+        <div class="regs" id="z80-regs" style="flex-shrink:0"></div>
+        <div style="margin-top:8px;padding-top:6px;border-top:1px solid #2a2a2a;
+             flex:1;min-height:0;display:flex;flex-direction:column">
+          <div style="color:#89b;font-size:.72em;letter-spacing:.04em;
+               margin-bottom:2px;flex-shrink:0" data-i18n="h_z80_stack">Stack (SP)</div>
+          <div id="z80-stack-body"
+               style="font:11px/16px 'Courier New',monospace;color:#ce8;
+                      white-space:pre;flex:1;min-height:0;overflow:hidden"></div>
+        </div>
+      </div>
     </div>
     <div class="panel" style="flex:1;min-width:0" id="cpu-circ-panel">
-      <h2 style="display:flex;align-items:center;gap:8px">
+      <h2 style="display:flex;align-items:center;gap:8px;margin-top:6px">
         <span>Circuits</span>
-        <span style="display:flex;gap:3px">
+        <span class="h2-tabs" style="display:flex;gap:3px">
           <button id="ccb-ram"    class="amber" onclick="cpuCircTab('ram')"   >RAM</button>
           <button id="ccb-ga"                  onclick="cpuCircTab('ga')"   >Gate Array</button>
           <button id="ccb-crtc"                onclick="cpuCircTab('crtc')" >CRTC</button>
@@ -289,6 +294,12 @@ label{color:#999}
                          padding:1px 4px;border-radius:2px;font:inherit">
             <option value="0">C0 (banks 0–3)</option>
           </select>
+          <span class="kv" style="margin-left:10px">Address:</span>
+          <input id="ram-goto" type="text" value="0000" maxlength="4"
+                 onkeydown="if(event.key==='Enter')ramGoto()"
+                 style="width:4em;background:#2a2a2a;color:#ce8;border:1px solid #444;
+                        border-radius:2px;padding:1px 4px;font:inherit;text-transform:uppercase">
+          <button onclick="ramGoto()">&#9656;</button>
         </div>
         <div class="row" style="margin-bottom:6px;flex-wrap:wrap;gap:4px;align-items:center">
           <span class="kv">Search (hex):</span>
@@ -301,13 +312,14 @@ label{color:#999}
           <span id="ram-search-info" style="color:#888;font-size:.82em"></span>
           <span style="margin-left:auto"><button onclick="refreshRam64K()">Refresh</button></span>
         </div>
-        <div style="display:flex;gap:0;align-items:stretch">
+        <div id="ram-dump-wrap" class="panel-resize" style="display:flex;gap:0;align-items:stretch;
+             resize:vertical;overflow:hidden;height:340px;min-height:200px">
           <pre id="cpu-ram-dump" style="font-size:.78em;line-height:1.35;
-               color:#ce8;height:232px;overflow:hidden;overflow-x:auto;
+               color:#ce8;height:100%;overflow:hidden;overflow-x:auto;
                background:#111;border:1px solid #2a2a2a;border-radius:2px 0 0 2px;
                padding:4px 6px;flex:1;margin:0;">&mdash;</pre>
           <input id="ram-scroll" type="range" min="0" max="65280" step="16" value="0"
-                 style="writing-mode:vertical-lr;height:232px;width:16px;
+                 style="writing-mode:vertical-lr;height:100%;width:16px;
                         flex-shrink:0;margin:0;padding:0;cursor:pointer;
                         border:1px solid #2a2a2a;border-left:none;border-radius:0 2px 2px 0;
                         background:#1a1a1a;accent-color:#6af"
@@ -354,24 +366,39 @@ label{color:#999}
                        border:1px solid #444;padding:1px 4px;border-radius:2px;font:inherit">
           <option value="cpu">CPU mapping</option>
         </select>
-        <button onclick="clearAllBreakpoints()" title="Z80 + BASIC + raster"
-                style="font-weight:normal;font-size:.78em;margin-left:auto"
-                data-i18n="btn_clear_bps">Clear all breakpoints</button>
-        <label style="font-weight:normal;font-size:.78em;color:#8af;display:flex;align-items:center;gap:4px;cursor:pointer">
-          <input type="checkbox" id="disasm-follow-pc" onchange="g_disasm_follow_pc=this.checked;if(this.checked){if(g_disasm_ram)disasmScrollToAddr(g_disasm_pc,true);else refreshCPU();}">
-          <span data-i18n="disasm_follow_pc">Follow PC</span>
-        </label>
       </h2>
-      <div id="disasm-view"
+      <div class="row" style="margin-bottom:6px">
+        <button onclick="disasmAnalyze()" data-i18n="btn_analyze">Analyze from PC</button>
+        <button onclick="disasmResetZones()" data-i18n="btn_reset_zones">Data only</button>
+        <button id="disasm-code-only" onclick="disasmToggleCodeOnly()"
+                title="Disassemble bytes not yet marked as code, in a distinct color"
+                data-i18n="btn_code_only">Code only</button>
+        <button onclick="clearAllBreakpoints()" title="Z80 + BASIC + raster"
+                data-i18n="btn_clear_bps">Clear all breakpoints</button>
+
+        <span style="margin-left:8px;border-left:1px solid #333;padding-left:8px">
+
+        <button id="disasm-follow-pc" onclick="disasmToggleFollowPc()" data-i18n="disasm_follow_pc">Follow PC</button>
+
+          <span class="kv" data-i18n="lbl_address">Address</span>
+          <input id="disasm-goto" type="text" value="0000" maxlength="4"
+                 onkeydown="if(event.key==='Enter')disasmGoto()"
+                 style="width:4em;background:#2a2a2a;color:#ce8;border:1px solid #444;
+                        border-radius:2px;padding:1px 4px;font:inherit;text-transform:uppercase">
+          <button onclick="disasmGoto()">&#9656;</button>
+        </span>
+        
+      </div>
+      <div id="disasm-view" class="panel-resize"
            style="font-family:'Courier New',monospace;font-size:12px;
                   overflow-y:auto;height:420px;background:#111;
-                  border:1px solid #2a2a2a;border-radius:2px">
+                  border:1px solid #2a2a2a;border-radius:2px;resize:vertical">
         <span style="color:#444;padding:4px;display:block" data-i18n="disasm_empty">No data — press Refresh.</span>
       </div>
     </div>
     <div class="panel" style="width:440px;flex-shrink:0">
       <h2 data-i18n="h_cpu_history">Last instructions</h2>
-      <div id="cpu-history" style="font-size:.75em;color:#888;height:420px;overflow-y:auto">--</div>
+      <div id="cpu-history" class="panel-resize" style="font-size:.75em;color:#888;height:420px;overflow-y:auto;resize:vertical">--</div>
     </div>
   </div>
 </div>
@@ -613,6 +640,7 @@ label{color:#999}
         </select>
         <button onclick="runScript()" style="background:#1a3a5a;border-color:#2a5a8a;color:#8af" data-i18n="btn_run">Run &#9654;</button>
         <button onclick="stopScript()" class="red" data-i18n="btn_stop">Stop &#9632;</button>
+        <button onclick="openConsole()" title="Interactive Lua console (separate page)">&gt;_ <span data-i18n="btn_console">Console</span></button>
       </span>
     </h2>
     <div class="row" style="margin-bottom:6px">
@@ -645,6 +673,13 @@ label{color:#999}
         <option value="2">CRTC 2</option>
         <option value="3">CRTC 3 (Plus)</option>
         <option value="4">CRTC 4 (GX4000)</option>
+      </select>
+      <label data-i18n="lbl_ram">Memory</label>
+      <select id="cfg-ram">
+        <option value="128">128 Ko</option>
+        <option value="192">192 Ko</option>
+        <option value="320">320 Ko</option>
+        <option value="576">576 Ko</option>
       </select>
     </div>
     <div class="row" style="margin-top:8px">
@@ -759,9 +794,9 @@ en:{
   th_var_name:'Name',th_var_type:'Type',th_var_value:'Value',
   th_arr_dims:'Dims',th_arr_values:'Values',h_basic_arrays:'Arrays',
   msg_no_vars:'No variables',msg_no_program:'No BASIC program in RAM',msg_saved_bas:'Saved .bas ✓',msg_direct_mode:'Direct mode',
-  h_z80:'Z80',h_gate_array:'Gate Array',
-  btn_step:'Step ▶|',btn_analyze:'Analyze from PC',btn_reset_zones:'Reset zones',btn_clear_bps:'Clear all breakpoints',
-  btn_goto_pc:'▶ PC',h_cpu_history:'Last instructions',h_disasm:'Disassembler',
+  h_z80:'Z80',h_z80_stack:'Stack (SP)',h_gate_array:'Gate Array',
+  btn_step:'Step ▶|',btn_analyze:'Analyze from PC',btn_reset_zones:'Data only',btn_code_only:'Code only',btn_clear_bps:'Clear all breakpoints',
+  h_cpu_history:'Last instructions',h_disasm:'Disassembler',
   disasm_empty:'No data — press Refresh (pause the emulator to mark code zones).',
   disasm_lines:'lines',disasm_analysing:'Analysing…',disasm_follow_pc:'Follow PC',view_cpu_mapping:'CPU mapping',
   msg_refresh_first:'Press Refresh first',msg_no_history:'No history — pause or step the emulator',
@@ -781,8 +816,8 @@ en:{
   hm_cold:'cold',hm_hot:'hot',hm_overlay_note:'overlay on central RAM',
   hm_bg_lbl:'RAM bg',
   hm_central_ram:'Central RAM',hm_ext_ram_page:'Extended RAM page',
-  h_script:'Script CSL / Lua',btn_run:'Run ▶',btn_stop:'Stop ■',
-  h_config:'Configuration',lbl_cpc_model:'CPC Model',lbl_crtc_type:'CRTC Type',
+  h_script:'Script CSL / Lua',btn_run:'Run ▶',btn_stop:'Stop ■',btn_console:'Console',
+  h_config:'Configuration',lbl_cpc_model:'CPC Model',lbl_crtc_type:'CRTC Type',lbl_ram:'Memory',
   lbl_mapping_kbd:'Keyboard mapping',
   btn_apply:'Apply configuration',hint_apply:'(resets the emulator)',
   h_drive_a:'Drive A',h_drive_b:'Drive B',
@@ -827,9 +862,9 @@ fr:{
   th_var_name:'Nom',th_var_type:'Type',th_var_value:'Valeur',
   th_arr_dims:'Dims',th_arr_values:'Valeurs',h_basic_arrays:'Tableaux',
   msg_no_vars:'Aucune variable',msg_no_program:'Aucun programme BASIC en RAM',msg_saved_bas:'.bas sauvé ✓',msg_direct_mode:'Mode direct',
-  h_z80:'Z80',h_gate_array:'Gate Array',
-  btn_step:'Pas ▶|',btn_analyze:'Analyser depuis PC',btn_reset_zones:'Réinitialiser zones',btn_clear_bps:'Retirer tous les points d\'arrêt',
-  btn_goto_pc:'▶ PC',h_cpu_history:'Dernières instructions',h_disasm:'Désassembleur',
+  h_z80:'Z80',h_z80_stack:'Pile (SP)',h_gate_array:'Gate Array',
+  btn_step:'Pas ▶|',btn_analyze:'Analyser depuis PC',btn_reset_zones:'Données uniquement',btn_code_only:'Code uniquement',btn_clear_bps:'Retirer tous les points d\'arrêt',
+  h_cpu_history:'Dernières instructions',h_disasm:'Désassembleur',
   disasm_empty:'Aucune donnée — cliquez Actualiser (mettez en pause pour marquer les zones de code).',
   disasm_lines:'lignes',disasm_analysing:'Analyse…',disasm_follow_pc:'Suivre PC',view_cpu_mapping:'Mapping CPU',
   msg_refresh_first:"Cliquez d'abord sur Actualiser",msg_no_history:'Aucun historique — mettez en pause ou faites un pas',
@@ -849,8 +884,8 @@ fr:{
   hm_cold:'froid',hm_hot:'chaud',hm_overlay_note:'overlay sur la RAM centrale',
   hm_bg_lbl:'fond RAM',
   hm_central_ram:'RAM centrale',hm_ext_ram_page:'RAM étendue page',
-  h_script:'Script CSL / Lua',btn_run:'Exécuter ▶',btn_stop:'Stop ■',
-  h_config:'Configuration',lbl_cpc_model:'Modèle CPC',lbl_crtc_type:'Type CRTC',
+  h_script:'Script CSL / Lua',btn_run:'Exécuter ▶',btn_stop:'Stop ■',btn_console:'Console',
+  h_config:'Configuration',lbl_cpc_model:'Modèle CPC',lbl_crtc_type:'Type CRTC',lbl_ram:'Mémoire',
   lbl_mapping_kbd:'Mapping clavier',
   btn_apply:'Appliquer la configuration',hint_apply:"(réinitialise l'émulateur)",
   h_drive_a:'Lecteur A',h_drive_b:'Lecteur B',
@@ -894,9 +929,9 @@ es:{
   th_var_name:'Nombre',th_var_type:'Tipo',th_var_value:'Valor',
   th_arr_dims:'Dims',th_arr_values:'Valores',h_basic_arrays:'Arrays',
   msg_no_vars:'Sin variables',msg_no_program:'Sin programa BASIC en RAM',msg_saved_bas:'.bas guardado ✓',msg_direct_mode:'Modo directo',
-  h_z80:'Z80',h_gate_array:'Gate Array',
-  btn_step:'Paso ▶|',btn_analyze:'Analizar desde PC',btn_reset_zones:'Borrar zonas',btn_clear_bps:'Eliminar todos los puntos de interrupción',
-  btn_goto_pc:'▶ PC',h_cpu_history:'Últimas instrucciones',h_disasm:'Desensamblador',
+  h_z80:'Z80',h_z80_stack:'Pila (SP)',h_gate_array:'Gate Array',
+  btn_step:'Paso ▶|',btn_analyze:'Analizar desde PC',btn_reset_zones:'Solo datos',btn_code_only:'Solo código',btn_clear_bps:'Eliminar todos los puntos de interrupción',
+  h_cpu_history:'Últimas instrucciones',h_disasm:'Desensamblador',
   disasm_empty:'Sin datos — pulse Actualizar (pause el emulador para marcar zonas de código).',
   disasm_lines:'líneas',disasm_analysing:'Analizando…',disasm_follow_pc:'Seguir PC',view_cpu_mapping:'Mapeado CPU',
   msg_refresh_first:'Pulse Actualizar primero',msg_no_history:'Sin historial — pause o avance paso a paso',
@@ -916,8 +951,8 @@ es:{
   hm_cold:'frío',hm_hot:'caliente',hm_overlay_note:'overlay sobre RAM central',
   hm_bg_lbl:'fondo RAM',
   hm_central_ram:'RAM central',hm_ext_ram_page:'RAM extendida página',
-  h_script:'Script CSL / Lua',btn_run:'Ejecutar ▶',btn_stop:'Parar ■',
-  h_config:'Configuración',lbl_cpc_model:'Modelo CPC',lbl_crtc_type:'Tipo CRTC',
+  h_script:'Script CSL / Lua',btn_run:'Ejecutar ▶',btn_stop:'Parar ■',btn_console:'Console',
+  h_config:'Configuración',lbl_cpc_model:'Modelo CPC',lbl_crtc_type:'Tipo CRTC',lbl_ram:'Memoria',
   lbl_mapping_kbd:'Mapping de teclado',
   btn_apply:'Aplicar configuración',hint_apply:'(reinicia el emulador)',
   h_drive_a:'Unidad A',h_drive_b:'Unidad B',
@@ -961,9 +996,9 @@ de:{
   th_var_name:'Name',th_var_type:'Typ',th_var_value:'Wert',
   th_arr_dims:'Dims',th_arr_values:'Werte',h_basic_arrays:'Arrays',
   msg_no_vars:'Keine Variablen',msg_no_program:'Kein BASIC-Programm im RAM',msg_saved_bas:'.bas gespeichert ✓',msg_direct_mode:'Direktmodus',
-  h_z80:'Z80',h_gate_array:'Gate Array',
-  btn_step:'Schritt ▶|',btn_analyze:'Analysieren ab PC',btn_reset_zones:'Zonen zurücksetzen',btn_clear_bps:'Alle Haltepunkte löschen',
-  btn_goto_pc:'▶ PC',h_cpu_history:'Letzte Befehle',h_disasm:'Disassembler',
+  h_z80:'Z80',h_z80_stack:'Stack (SP)',h_gate_array:'Gate Array',
+  btn_step:'Schritt ▶|',btn_analyze:'Analysieren ab PC',btn_reset_zones:'Nur Daten',btn_code_only:'Nur Code',btn_clear_bps:'Alle Haltepunkte löschen',
+  h_cpu_history:'Letzte Befehle',h_disasm:'Disassembler',
   disasm_empty:'Keine Daten — Aktualisieren drücken (zum Markieren der Code-Zonen pausieren).',
   disasm_lines:'Zeilen',disasm_analysing:'Analysiere…',disasm_follow_pc:'PC folgen',view_cpu_mapping:'CPU-Mapping',
   msg_refresh_first:'Zuerst Aktualisieren drücken',msg_no_history:'Kein Verlauf — pausieren oder Einzelschritt',
@@ -983,8 +1018,8 @@ de:{
   hm_cold:'kalt',hm_hot:'heiß',hm_overlay_note:'Überlagerung auf zentralem RAM',
   hm_bg_lbl:'RAM Hgrd.',
   hm_central_ram:'Zentrales RAM',hm_ext_ram_page:'Erweitertes RAM Seite',
-  h_script:'Skript CSL / Lua',btn_run:'Ausführen ▶',btn_stop:'Stop ■',
-  h_config:'Konfiguration',lbl_cpc_model:'CPC-Modell',lbl_crtc_type:'CRTC-Typ',
+  h_script:'Skript CSL / Lua',btn_run:'Ausführen ▶',btn_stop:'Stop ■',btn_console:'Console',
+  h_config:'Konfiguration',lbl_cpc_model:'CPC-Modell',lbl_crtc_type:'CRTC-Typ',lbl_ram:'Speicher',
   lbl_mapping_kbd:'Tastatur-Mapping',
   btn_apply:'Konfiguration anwenden',hint_apply:'(startet den Emulator neu)',
   h_drive_a:'Laufwerk A',h_drive_b:'Laufwerk B',
@@ -1056,10 +1091,11 @@ function h2(v){return(v&0xFF).toString(16).toUpperCase().padStart(2,'0')}
 function h4(v){return(v&0xFFFF).toString(16).toUpperCase().padStart(4,'0')}
 function rgbCss(n){const r=(n>>>16)&0xFF,g=(n>>>8)&0xFF,b=n&0xFF;
   return'#'+r.toString(16).padStart(2,'0')+g.toString(16).padStart(2,'0')+b.toString(16).padStart(2,'0')}
-function reg(n,v,w,jump){
+function reg(n,v,w,jump,changed){
   const cls=jump?' reg-jump':'';
   const click=jump?` onclick="regJumpToRam(${v&0xFFFF})" title="Jump RAM view to this address"`:'';
-  return`<div class="reg${cls}"${click}><span class="rn">${n}</span><span class="rv">${w===2?h2(v):h4(v)}</span></div>`;
+  const rvCls=changed?' valflash':'';
+  return`<div class="reg${cls}"${click}><span class="rn">${n}</span><span class="rv${rvCls}">${w===2?h2(v):h4(v)}</span></div>`;
 }
 // Switch the Debug tab's embedded RAM viewer to the given 16-bit address —
 // used by clicking a register name (PC/SP/BC/DE/HL/IX/IY).
@@ -1067,12 +1103,12 @@ function regJumpToRam(addr){
   cpuCircTab('ram');
   ramScrollTo(addr);
 }
-function regAF(a,f,s){
+function regAF(a,f,s,changedA,changedF){
   const FD=[{b:7,l:'S',t:'Sign'},{b:6,l:'Z',t:'Zero'},{b:4,l:'H',t:'Half-Carry'},{b:2,l:'P',t:'P/V'},{b:1,l:'N',t:'Subtract'},{b:0,l:'C',t:'Carry'}];
   const fh=FD.map(({b,l,t})=>`<span style="color:${(f>>(b))&1?'#fda':'#3a3a3a'}" title="${t}">${l}</span>`).join(' ');
   return`<div style="display:flex;flex-direction:column;gap:1px">`+
-    `<div class="reg"><span class="rn">A${s}</span><span class="rv">${h2(a)}</span></div>`+
-    `<div class="reg"><span class="rn">F${s}</span><span class="rv" style="font-size:.85em;letter-spacing:0">${fh}</span></div>`+
+    `<div class="reg"><span class="rn">A${s}</span><span class="rv${changedA?' valflash':''}">${h2(a)}</span></div>`+
+    `<div class="reg"><span class="rn">F${s}</span><span class="rv${changedF?' valflash':''}" style="font-size:.85em;letter-spacing:0">${fh}</span></div>`+
     `</div>`;}
 // ── Z80 conditional-instruction helpers ──────────────────────────────────────
 // Returns true/false if condition cc is met given flags byte f, null if unknown.
@@ -1171,6 +1207,43 @@ function cpuCircTab(name){
   });
   if(name==='ram')refreshRam64K();
   if(name==='screen')refreshScreen();
+}
+// Mirror the height of two vertically-resizable panels (native CSS `resize`
+// handle on their bottom-right corner) so dragging either one's grip resizes
+// both together — used to link the Z80/stack panel with the RAM dump, and
+// the disassembler with the last-instructions history.
+function linkVerticalResize(idA,idB,onResize){
+  const elA=document.getElementById(idA),elB=document.getElementById(idB);
+  if(!elA||!elB)return;
+  // Preserve the height difference between A and B instead of forcing them
+  // equal: the two panels can have different amounts of "chrome" (extra
+  // header rows) around their resizable box, so keeping a constant delta —
+  // rather than equal absolute heights — is what makes each box's resize
+  // handle land exactly on its own panel's bottom-right corner, for any size.
+  // The delta is captured lazily, the first time both boxes report a real
+  // (non-zero) layout, since this is wired up at DOMContentLoaded time while
+  // the CPU tab is still `display:none` (both would read 0 there).
+  let delta=null;
+  let syncing=false;
+  const ro=new ResizeObserver(entries=>{
+    if(syncing)return;
+    const hA=elA.getBoundingClientRect().height,hB=elB.getBoundingClientRect().height;
+    if(delta===null){
+      if(hA<1||hB<1)return; // tab not shown yet — still collapsed
+      delta=hA-hB;
+      return; // this notification is just the first real layout, nothing to mirror
+    }
+    syncing=true;
+    for(const en of entries){
+      const isA=en.target===elA;
+      const target=isA?elB:elA;
+      const h=Math.round(en.target.getBoundingClientRect().height-(isA?delta:-delta));
+      if(Math.abs(target.getBoundingClientRect().height-h)>1)target.style.height=h+'px';
+    }
+    if(onResize)onResize();
+    requestAnimationFrame(()=>{syncing=false;});
+  });
+  ro.observe(elA);ro.observe(elB);
 }
 // Last crop rect used for the displayed screenshot, in video-buffer space —
 // cached so screenClick()/screenRightClick() share the exact same geometry
@@ -1309,21 +1382,51 @@ function setConnected(ok){
     applyLang();  // refresh overlay text in current language
   }
 }
+let g_prev_z80=null; // previous /api/z80 snapshot, for change-highlight (valflash)
 function updateZ80(z){
   if(!g_state)g_state={};
   g_state.z80=z;
   hmDrawOverlay(hmGetBankIdx());
+  const p=g_prev_z80;
+  const chg=(a,b)=>!!p&&a!==b;
   document.getElementById('z80-regs').innerHTML=[
-    reg('PC',z.PC,4,true),  reg('SP',z.SP,4,true),
-    regAF(z.A,z.F,''),  regAF(z.A2,z.F2,"'"),
-    reg('BC',(z.B<<8)|z.C,4,true),  reg("BC'",(z.B2<<8)|z.C2,4,true),
-    reg('DE',(z.D<<8)|z.E,4,true),  reg("DE'",(z.D2<<8)|z.E2,4,true),
-    reg('HL',(z.H<<8)|z.L,4,true),  reg("HL'",(z.H2<<8)|z.L2,4,true),
-    reg('IX',z.IX,4,true),  reg('IY',z.IY,4,true),
-    reg('I',z.I,2),  reg('R',z.R,2),
-    `<div class="reg"><span class="rn">IFF</span><span class="rv">${z.IFF1}/${z.IFF2}</span></div>`,
-    `<div class="reg"><span class="rn">IM</span><span class="rv">${z.IM}</span></div>`,
+    reg('PC',z.PC,4,true,chg(z.PC,p&&p.PC)),  reg('SP',z.SP,4,true,chg(z.SP,p&&p.SP)),
+    regAF(z.A,z.F,'',chg(z.A,p&&p.A),chg(z.F,p&&p.F)),  regAF(z.A2,z.F2,"'",chg(z.A2,p&&p.A2),chg(z.F2,p&&p.F2)),
+    reg('BC',(z.B<<8)|z.C,4,true,chg(z.B,p&&p.B)||chg(z.C,p&&p.C)),
+    reg("BC'",(z.B2<<8)|z.C2,4,true,chg(z.B2,p&&p.B2)||chg(z.C2,p&&p.C2)),
+    reg('DE',(z.D<<8)|z.E,4,true,chg(z.D,p&&p.D)||chg(z.E,p&&p.E)),
+    reg("DE'",(z.D2<<8)|z.E2,4,true,chg(z.D2,p&&p.D2)||chg(z.E2,p&&p.E2)),
+    reg('HL',(z.H<<8)|z.L,4,true,chg(z.H,p&&p.H)||chg(z.L,p&&p.L)),
+    reg("HL'",(z.H2<<8)|z.L2,4,true,chg(z.H2,p&&p.H2)||chg(z.L2,p&&p.L2)),
+    reg('IX',z.IX,4,true,chg(z.IX,p&&p.IX)),  reg('IY',z.IY,4,true,chg(z.IY,p&&p.IY)),
+    reg('I',z.I,2,false,chg(z.I,p&&p.I)),  reg('R',z.R,2,false,chg(z.R,p&&p.R)),
+    `<div class="reg"><span class="rn">IFF</span><span class="rv${p&&(z.IFF1!==p.IFF1||z.IFF2!==p.IFF2)?' valflash':''}">${z.IFF1}/${z.IFF2}</span></div>`,
+    `<div class="reg"><span class="rn">IM</span><span class="rv${chg(z.IM,p&&p.IM)?' valflash':''}">${z.IM}</span></div>`,
   ].join('');
+  g_prev_z80={...z};
+  refreshStack();
+}
+// ── Z80 stack view: SP, SP+2, SP+4… as 16-bit little-endian words ───────────
+// Row count adapts to the available height of #z80-stack-body (resizable
+// together with the Z80 panel, see linkVerticalResize).
+function refreshStack(){
+  const body=document.getElementById('z80-stack-body');
+  if(!body||!g_state||!g_state.z80)return;
+  const sp=g_state.z80.SP&0xFFFF;
+  const ram=g_disasm_ram;
+  const rowPx=16; // matches the 11px/16px font set on #z80-stack-body
+  const rows=Math.max(1,Math.floor(body.clientHeight/rowPx));
+  let html='';
+  for(let i=0;i<rows;i++){
+    const addr=(sp+i*2)&0xFFFF;
+    let valTxt='----';
+    if(ram){
+      const lo=ram[addr],hi=ram[(addr+1)&0xFFFF];
+      valTxt=h4((hi<<8)|lo);
+    }
+    html+=`${_addrLabel(addr,-1)} : ${valTxt}\n`;
+  }
+  body.textContent=html;
 }
 function updateGA(ga){
   const swatches=ga.ink_rgb.map((c,i)=>
@@ -1479,11 +1582,12 @@ function loadConfig(cfg){
   g_config=cfg;
   document.getElementById('cfg-model').value=cfg.cpc_model;
   document.getElementById('cfg-crtc').value=cfg.crtc_type;
+  if(cfg.ram_kb!==undefined)document.getElementById('cfg-ram').value=cfg.ram_kb;
   if(cfg.mapping_keyboard!==undefined){const el=document.getElementById('cfg-mapping-kbd');if(el)el.checked=cfg.mapping_keyboard;}
   hmBuildUI();
   ramBuildBankSelectors();
 }
-function toggleMappingKeyboard(on){post('/api/config',{mapping_keyboard:on}).then(()=>{});}
+function toggleMappingKeyboard(on){post('/api/config',{mapping_keyboard:on}).catch(e=>setStatus(e.message,'#f64'));}
 function setStatus(msg,color){
   const el=document.getElementById('status-line');
   el.textContent=msg;el.style.color=color||'#6f9';
@@ -1685,19 +1789,27 @@ let g_code_map=null;       // Uint8Array 65536 — 1 = instruction start (code),
 let g_static_map=null;     // Uint8Array 65536 — last static analysis (kept across rebuilds)
 let g_disasm_lines=[];     // [{addr, kind:'code'|'data', mnem, ops, size, bytes}]
 let g_disasm_pc=0;         // current PC
-let g_disasm_follow_pc=false;  // follow PC on refresh (toggled by checkbox)
+let g_disasm_follow_pc=false;  // follow PC on refresh (toggled by button)
+let g_disasm_guess_code=false; // disassemble not-yet-marked bytes too, shown in a distinct color
 let g_disasm_view='cpu';   // 'cpu' = Z80 mapping (default), 'fw' = firmware ROM, integer = physical bank
 let g_disasm_scroll_pending=false;
 let g_exec_map=null;       // Uint8Array 65536 — executed-instruction-start map (from backend)
 
-// Build the full 0000..FFFF listing: code[addr]===1 → disassemble, else group
-// consecutive non-code bytes into `defb` lines of up to 16 bytes.
+// Build the full 0000..FFFF listing: code[addr]===1 → disassemble as confirmed
+// code; else, if g_disasm_guess_code, disassemble anyway as a best-effort guess
+// (kind:'guess', rendered in a distinct color — never merged into the code map,
+// so a misaligned guess can't corrupt the trusted zones); otherwise group
+// consecutive bytes into `defb` lines of up to 16 bytes.
 function buildDisasmLines(ram,code){
   const lines=[];let addr=0;
   while(addr<=0xFFFF){
     if(code&&code[addr]===1){
       const{mnem,ops,size}=z80dis(ram,addr);
       lines.push({addr,kind:'code',mnem,ops,size});
+      addr=(addr+size);
+    }else if(g_disasm_guess_code){
+      const{mnem,ops,size}=z80dis(ram,addr);
+      lines.push({addr,kind:'guess',mnem,ops,size});
       addr=(addr+size);
     }else{
       const start=addr;const bytes=[];
@@ -1712,7 +1824,7 @@ function buildDisasmLines(ram,code){
 function disasmLineIndex(addr){
   const L=g_disasm_lines;let lo=0,hi=L.length-1;
   while(lo<=hi){const mid=(lo+hi)>>1;const ln=L[mid];
-    const len=ln.kind==='code'?ln.size:ln.bytes.length;
+    const len=(ln.kind==='code'||ln.kind==='guess')?ln.size:ln.bytes.length;
     if(addr<ln.addr)hi=mid-1;
     else if(addr>=ln.addr+len)lo=mid+1;
     else return mid;}
@@ -1739,7 +1851,7 @@ function _addrLabel(addr,bankGroupIdx){
   return`?:${rel} ${full}`;}
 
 function _rowHtml(ln,pc){
-  const len=ln.kind==='code'?ln.size:ln.bytes.length;
+  const len=(ln.kind==='code'||ln.kind==='guess')?ln.size:ln.bytes.length;
   const isPC=pc>=ln.addr&&pc<ln.addr+len;
   const addrCol=_addrInRom(ln.addr)?'#a86':'#5af';
   const bgi=g_disasm_view==='cpu'?-1:g_disasm_view==='fw'?-2:g_disasm_view;
@@ -1755,6 +1867,12 @@ function _rowHtml(ln,pc){
     const rawOps=isPC?z80HighlightOps(ln.mnem,ln.ops,g_state?.z80?.F):ln.ops;
     const opS=`<span style="color:#ce8">${rawOps}</span>`;
     body=`${bpS} ${addrS}  ${hexS}  ${mnS} ${opS}`;
+  }else if(ln.kind==='guess'){
+    const hexArr=[];for(let i=0;i<ln.size;i++)hexArr.push(h2(RAM[(ln.addr+i)&0xFFFF]));
+    const hexS=`<span style="color:#444">${hexArr.join(' ').padEnd(11,' ')}</span>`;
+    const mnS=`<span style="color:#889;display:inline-block;min-width:5ch">${ln.mnem}</span>`;
+    const opS=`<span style="color:#678">${ln.ops}</span>`;
+    body=`  ${addrS}  ${hexS}  ${mnS} ${opS}`;
   }else{
     const hexs=ln.bytes.map(b=>'&amp;'+h2(b)).join(',');
     let asc='';for(const b of ln.bytes)asc+=(b>=32&&b<127)?String.fromCharCode(b):'.';
@@ -1806,8 +1924,9 @@ function disasmRebuild(toPC){
   g_code_map=code;
   g_disasm_lines=buildDisasmLines(ram,code);
   const nCode=g_disasm_lines.filter(l=>l.kind==='code').length;
+  const nGuess=g_disasm_lines.filter(l=>l.kind==='guess').length;
   const st=document.getElementById('disasm-status');
-  if(st)st.textContent=`${nCode} instr · ${g_disasm_lines.length} ${t('disasm_lines')}`;
+  if(st)st.textContent=`${nCode} instr${nGuess?' · '+nGuess+' guess':''} · ${g_disasm_lines.length} ${t('disasm_lines')}`;
   if(toPC)disasmScrollToAddr(g_disasm_pc,true);
   else renderDisasmWindow();}
 
@@ -1881,15 +2000,30 @@ function disasmAnalyze(){
   const st=document.getElementById('disasm-status');if(st)st.textContent=t('disasm_analysing');
   setTimeout(()=>{
     g_static_map=z80analyze(g_disasm_ram,g_disasm_pc,8000);
-    disasmRebuild(false);},10);}
+    disasmRebuild(false); disasmGotoPC()},10);}
 
 function disasmResetZones(){
   g_static_map=null;
   if(g_exec_map)g_exec_map.fill(0);
   fetch(API_BASE+'/api/codemap',{method:'DELETE'}).catch(()=>{});
-  disasmRebuild(false);}
+  disasmRebuild(false);disasmGotoPC()}
+
+function disasmToggleCodeOnly(){
+  g_disasm_guess_code=!g_disasm_guess_code;
+  const btn=document.getElementById('disasm-code-only');
+  if(btn)btn.classList.toggle('amber',g_disasm_guess_code);
+  disasmRebuild(false);
+}
 
 function disasmGotoPC(){disasmScrollToAddr(g_disasm_pc,true);}
+function disasmToggleFollowPc(){
+  g_disasm_follow_pc=!g_disasm_follow_pc;
+  const btn=document.getElementById('disasm-follow-pc');
+  if(btn)btn.classList.toggle('amber',g_disasm_follow_pc);
+  if(g_disasm_follow_pc){
+    if(g_disasm_ram)disasmScrollToAddr(g_disasm_pc,true);else refreshCPU();
+  }
+}
 function disasmGoto(){
   const v=document.getElementById('disasm-goto').value.trim();
   const a=parseInt(v,16);
@@ -1977,7 +2111,7 @@ function cpuSyncControls(){
 }
 
 function cpuTogglePause(){
-  post('/api/config',{paused:!g_paused}).then(()=>setTimeout(()=>{refresh();refreshCPU();},80));}
+  post('/api/config',{paused:!g_paused}).then(()=>setTimeout(()=>{refresh();refreshCPU();},80)).catch(e=>setStatus(e.message,'#f64'));}
 
 function _wireDisasmScroll(){
   const c=document.getElementById('disasm-view');
@@ -2003,6 +2137,7 @@ async function refreshCPU(){
   const hist=await fetch(API_BASE+'/api/history').then(r=>r.json()).catch(()=>null);
   if(hist)updateHistory(hist);
   await fetchFullRam();
+  refreshStack();
   await fetchCodemap();
   await fetchMemmap();
   renderMemmap();
@@ -2165,10 +2300,10 @@ function audioSetVolume(v){
   const pct=parseInt(v,10)||0;
   g_audio_vol_ts=Date.now();
   audioSetVolLabel(pct);
-  post(API_BASE+'/api/config',{volume:pct});
+  post(API_BASE+'/api/config',{volume:pct}).catch(e=>setStatus(e.message,'#f64'));
 }
 function audioSetDevice(name){
-  post(API_BASE+'/api/config',{audio_device:name});
+  post(API_BASE+'/api/config',{audio_device:name}).catch(e=>setStatus(e.message,'#f64'));
 }
 // Pull the live volume back from the app (changed via hotkey/wheel/menu) into
 // the slider. Skipped while the user is dragging, throttled to ~1/s.
@@ -2505,7 +2640,7 @@ function rndApplyCrt(immediate){
       const inp=document.getElementById('rnd-'+p.k);if(!inp)continue;
       crt[p.k]=p.type==='select'?parseInt(inp.value):parseFloat(inp.value);
     }
-    post(API_BASE+'/api/render',{crt});
+    post(API_BASE+'/api/render',{crt}).catch(e=>setStatus(e.message,'#f64'));
   };
   if(immediate)doPost(); else g_rnd_post_timer=setTimeout(doPost,60);}
 
@@ -2541,8 +2676,8 @@ function rndSlide_display(k){ // update value label only (no POST)
 
 function rndSetMonitor(v){
   rndUpdateCrtEnabled(v); // enable/disable the shader controls immediately, before the round-trip
-  post(API_BASE+'/api/render',{monitor:parseInt(v)}).then(()=>setTimeout(refreshRender,80));}
-function rndSetScreen(v){post(API_BASE+'/api/render',{screen_type:parseInt(v)});}
+  post(API_BASE+'/api/render',{monitor:parseInt(v)}).then(()=>setTimeout(refreshRender,80)).catch(e=>setStatus(e.message,'#f64'));}
+function rndSetScreen(v){post(API_BASE+'/api/render',{screen_type:parseInt(v)}).catch(e=>setStatus(e.message,'#f64'));}
 function psgDrawWaveform(data){
   // Kept as compatibility alias — routes to the new waveform renderer.
   audioDrawWave(data);
@@ -2585,20 +2720,36 @@ function _psgDrawWaveformOld_unused(data){
     drawCh(M,'#fda',1);
   }
 }
+// POST JSON and REJECT on a non-2xx answer, with the server's own explanation as
+// the Error message. The API no longer answers 200 {"ok":true} for a request it
+// could not apply: a rejected field comes back as 400 {"error":…,"field":…}, so a
+// caller that only chained .then() would print its success message over a request
+// that did nothing. Every caller therefore needs a .catch — pass e.message
+// through wherever there is a status line to show it in.
 function post(url,body){
   return fetch(url,{method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify(body)});
+    body:JSON.stringify(body)})
+    .then(r=>{
+      if(r.ok)return r;
+      return r.json().catch(()=>({})).then(j=>{
+        const detail=(j&&j.error)?j.error:('HTTP '+r.status);
+        console.warn('POST '+url+' → '+detail);
+        throw new Error(detail);
+      });
+    });
 }
-function togglePause(){post('/api/config',{paused:!g_paused}).then(refresh);}
+function togglePause(){post('/api/config',{paused:!g_paused}).then(refresh).catch(e=>setStatus(e.message,'#f64'));}
 function doAction(type){
   post('/api/config',type==='soft'?{do_soft_reset:true}:{do_hard_reset:true})
-    .then(()=>setTimeout(refresh,300));
+    .then(()=>setTimeout(refresh,300))
+    .catch(e=>setStatus(e.message,'#f64'));
 }
 function applyConfig(){
   const model=parseInt(document.getElementById('cfg-model').value);
   const crtc=parseInt(document.getElementById('cfg-crtc').value);
-  post('/api/config',{cpc_model:model,crtc_type:crtc})
+  const ramKb=parseInt(document.getElementById('cfg-ram').value);
+  post('/api/config',{cpc_model:model,crtc_type:crtc,ram_kb:ramKb})
     .then(r=>r.json())
     .then(()=>{
       setStatus(t('msg_config_applied'));
@@ -2607,12 +2758,26 @@ function applyConfig(){
         fetch(API_BASE+'/api/config').then(r=>r.json()).then(loadConfig).catch(()=>{});
       },500);
     })
-    .catch(()=>setStatus(t('msg_error'),'#f64'));
+    .catch(e=>setStatus(e.message||t('msg_error'),'#f64'));
 }
 
 // ── RAM ──────────────────────────────────────────────────────────────
 let ramPrevHex=null;let ramPrevBank=-1;let g_ramViewBase=0;
 let g_ram_cpu_memmap_sig=null;
+// Number of bytes shown in the RAM dump window, derived from the current
+// height of #cpu-ram-dump so dragging the #ram-dump-wrap resize handle
+// (linked to the Z80 panel, see linkVerticalResize) shows more/fewer rows.
+function ramWindowBytes(){
+  const pre=document.getElementById('cpu-ram-dump');
+  if(!pre)return 256;
+  const rowPx=13.7; // font-size:.78em line-height:1.35 on #cpu-ram-dump
+  const rows=Math.max(4,Math.floor((pre.clientHeight-8)/rowPx));
+  return rows*16;
+}
+function ramMaxScroll(){
+  const total=ramGetBankIdx()==='fw'?32768:65536;
+  return Math.max(0,total-ramWindowBytes())&~0xF;
+}
 function _memmapSig(){return g_memmap?g_memmap.map(r=>r.rom?'R'+r.rom_bank:'B'+r.ram_bank).join(','):null;}
 let g_ram_search_matches=[];let g_ram_search_idx=0;
 function setRamStatus(msg,color){
@@ -2673,7 +2838,7 @@ function ramBuildHighlightSet(){
 function ramBankChanged(){
   g_ramViewBase=0;
   const _sl=document.getElementById('ram-scroll');
-  if(_sl){_sl.value=0;_sl.max=ramGetBankIdx()==='fw'?32512:65280;}
+  if(_sl){_sl.value=0;_sl.max=ramMaxScroll();}
   ramPrevHex=null;ramPrevBank=-1;
   g_ram_search_matches=[];g_ram_search_idx=0;
   const info=document.getElementById('ram-search-info');
@@ -2726,14 +2891,17 @@ function refreshRam64K(){
     :isFw
     ?API_BASE+'/api/ram?addr=0&len=32768&view=fw'
     :API_BASE+`/api/ram?addr=0&len=65536&bank=${bankIdx}`;
+  const slider=document.getElementById('ram-scroll');
+  if(slider)slider.max=ramMaxScroll();
 
   const doRender=(d)=>{
     if(d.error){el.textContent='Error: '+d.error;ramPrevHex=null;ramPrevBank=-1;return;}
     const prev=(ramPrevBank===bankIdx)?ramPrevHex:null;
     const hl=ramBuildHighlightSet();
     const base=g_ramViewBase;
-    const windowHex=d.hex.slice(base*2,(base+256)*2).padEnd(512,'00');
-    const prevWindow=prev?prev.slice(base*2,(base+256)*2).padEnd(512,'00'):null;
+    const win=ramWindowBytes();
+    const windowHex=d.hex.slice(base*2,(base+win)*2).padEnd(win*2,'00');
+    const prevWindow=prev?prev.slice(base*2,(base+win)*2).padEnd(win*2,'00'):null;
     el.innerHTML=renderHexDump(windowHex,prevWindow,hl,bankBase,base,isCpu,isFw);
     ramPrevHex=d.hex;ramPrevBank=bankIdx;
   };
@@ -2767,15 +2935,23 @@ function renderRamWindow(){
   const bankBase=(isCpu||isFw)?0:(bankIdx*4);
   const base=g_ramViewBase;
   const hl=ramBuildHighlightSet();
-  const windowHex=ramPrevHex.slice(base*2,(base+256)*2).padEnd(512,'00');
+  const win=ramWindowBytes();
+  const windowHex=ramPrevHex.slice(base*2,(base+win)*2).padEnd(win*2,'00');
   el.innerHTML=renderHexDump(windowHex,null,hl,bankBase,base,isCpu,isFw);
 }
 function ramScrollTo(v){
-  const maxScroll=ramGetBankIdx()==='fw'?32512:65280;
+  const maxScroll=ramMaxScroll();
   g_ramViewBase=Math.max(0,Math.min(maxScroll,parseInt(v)||0))&~0xF;
   const slider=document.getElementById('ram-scroll');
-  if(slider)slider.value=g_ramViewBase;
+  if(slider){slider.max=maxScroll;slider.value=g_ramViewBase;}
   renderRamWindow();
+}
+// Jump the RAM dump window to a hex address typed in #ram-goto (task: quick
+// address shortcut for the RAM view, mirrors disasmGoto()).
+function ramGoto(){
+  const v=document.getElementById('ram-goto').value.trim();
+  const a=parseInt(v,16);
+  if(!isNaN(a))ramScrollTo(a&0xFFFF);
 }
 // ── RAM hex-dump inline cell editor ──────────────────────────────────
 const g_hexEdit={el:null,input:null};
@@ -2864,7 +3040,7 @@ function hexEditCommit(span,addr,bank,moveNext){
     hexEditOpen(nextSpan);
   } else if(nextAddr>=0){
     // Adresse suivante hors de la fenêtre — on avance la fenêtre
-    g_ramViewBase=Math.max(0,Math.min(65280,nextAddr&~0xF));
+    g_ramViewBase=Math.max(0,Math.min(ramMaxScroll(),nextAddr&~0xF));
     const slider=document.getElementById('ram-scroll');
     if(slider)slider.value=g_ramViewBase;
     renderRamWindow();
@@ -2912,16 +3088,33 @@ function ramSearchNext(){
 }
 function ramScrollToMatch(idx){
   const addr=g_ram_search_matches[idx];
-  const maxScroll=ramGetBankIdx()==='fw'?32512:65280;
+  const maxScroll=ramMaxScroll();
   g_ramViewBase=Math.max(0,Math.min(maxScroll,addr&~0xFF))&~0xF;
   const slider=document.getElementById('ram-scroll');
-  if(slider)slider.value=g_ramViewBase;
+  if(slider){slider.max=maxScroll;slider.value=g_ramViewBase;}
   if(ramPrevHex)renderRamWindow();else refreshRam64K();
 }
 function cleanHex(s){return s.replace(/[^0-9a-fA-F]/g,'');}
 function pokeGetBankIdx(){
   const sel=document.getElementById('poke-bank-sel');
   return sel?parseInt(sel.value)||0:0;
+}
+// POST /api/ram and POST /api/exec queue the write and return {"ok":true,
+// "seq":N} — N is reached by GET /api/ping's emu.ram_apply_seq once the main
+// thread has actually applied it. Poll that instead of guessing a flat delay
+// before refreshing a view that reads the same memory back.
+function waitRamApplySeq(seq,timeoutMs){
+  if(!seq)return Promise.resolve();
+  const deadline=Date.now()+(timeoutMs||1000);
+  return new Promise(resolve=>{
+    (function poll(){
+      fetch(API_BASE+'/api/ping').then(r=>r.json()).then(j=>{
+        const applied=j&&j.emu&&j.emu.ram_apply_seq;
+        if((applied!==undefined&&applied>=seq)||Date.now()>=deadline){resolve();return;}
+        setTimeout(poll,30);
+      }).catch(()=>resolve());
+    })();
+  });
 }
 function writeRam(doExec){
   const addr=parseInt(document.getElementById('wr-addr').value,16)||0;
@@ -2938,25 +3131,26 @@ function writeRam(doExec){
   }
   post('/api/ram',body)
     .then(r=>r.json())
-    .then(()=>{
+    .then(j=>{
       const nb=data.length/2;
       const bankOff=addr%0x4000;
       setRamStatus(`${nb} byte(s) → C${bankNum}:${bankOff.toString(16).toUpperCase().padStart(4,'0')}${doExec?' + execute ✓':' ✓'}`);
-      setTimeout(refreshRam64K,200);
+      waitRamApplySeq(j.seq,1000).then(refreshRam64K);
     })
-    .catch(()=>setRamStatus(t('msg_error'),'#f64'));
+    .catch(e=>setRamStatus(e.message||t('msg_error'),'#f64'));
 }
 function execAt(){
   const entry=parseInt(document.getElementById('wr-entry').value,16);
   if(isNaN(entry)){setRamStatus(t('msg_invalid_addr'),'#fa0');return;}
   const bankIdx=pokeGetBankIdx();
   post('/api/exec',{addr:entry,bank:bankIdx})
+    .then(r=>r.json())
     .then(()=>{
       const bankBase=bankIdx*4;
       const bankNum=bankBase+Math.floor(entry/0x4000);
       setRamStatus(`✓ C${bankNum}:${(entry%0x4000).toString(16).toUpperCase().padStart(4,'0')}`);
     })
-    .catch(()=>setRamStatus(t('msg_error'),'#f64'));
+    .catch(e=>setRamStatus(e.message||t('msg_error'),'#f64'));
 }
 // ── RAM Heatmap ───────────────────────────────────────────────────────
 const HM_HEX_LUT=(()=>{const t=new Uint8Array(128);
@@ -3268,10 +3462,12 @@ document.addEventListener('DOMContentLoaded',()=>{
     e.preventDefault();
     const dir=e.deltaY>0?1:-1;
     const step=e.shiftKey?256:16;
-    g_ramViewBase=Math.max(0,Math.min(65280,g_ramViewBase+dir*step))&~0xF;
+    g_ramViewBase=Math.max(0,Math.min(ramMaxScroll(),g_ramViewBase+dir*step))&~0xF;
     const sl=document.getElementById('ram-scroll');if(sl)sl.value=g_ramViewBase;
     renderRamWindow();
   },{passive:false});
+  linkVerticalResize('z80-body','ram-dump-wrap',()=>{refreshStack();renderRamWindow();});
+  linkVerticalResize('disasm-view','cpu-history');
   // ── Audio waveform interactions ────────────────────────────────────────────
   const _wave=document.getElementById('audio-wave');
   if(_wave){
@@ -3517,6 +3713,9 @@ function runScript(){
       else setScriptStatus(t('msg_error'),'#f64');
     }).catch(()=>setScriptStatus(t('msg_connection_lost'),'#f64'));
 }
+// The console is a page of its own (served at /console), not a tab: it reloads
+// without disturbing the debugger and sits in a second browser tab beside it.
+function openConsole(){window.open((API_BASE||'')+'/console','_blank');}
 function stopScript(){
   fetch(API_BASE+'/api/script',{method:'DELETE'})
     .then(()=>setScriptStatus(t('msg_stopped'),'#fa8'))
@@ -4074,7 +4273,7 @@ async function basicToggleEdit(){
     }
     basicSetEditMode(false);
     // Resume emulator (it may already be running — no-op if so) then autotype RUN
-    post(API_BASE+'/api/config',{paused:false});
+    post(API_BASE+'/api/config',{paused:false}).catch(e=>setBasicStatus(e.message,'#f64'));
     fetch(API_BASE+'/api/keytype',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text:'RUN\n'})})
       .then(()=>setTimeout(()=>{refresh();basicRefresh();},200)).catch(()=>{});
   }else{
@@ -4094,7 +4293,7 @@ async function basicToggleEdit(){
     // decode \u escapes, and ams_type_codepoint has no mapping for 0x1B).
     // POLL_ENDED will detect cur_line→0xFFFF and handle export + switch to EDIT.
     // If emulator is paused (debug mode), resume first so it can process the keys.
-    if(g_paused)await post(API_BASE+'/api/config',{paused:false});
+    if(g_paused)await post(API_BASE+'/api/config',{paused:false}).catch(e=>setBasicStatus(e.message,'#f64'));
     const esc=()=>fetch(API_BASE+'/api/keypress',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({vk:0x97})}).catch(()=>{});
     await esc();await esc();
     setBasicStatus('Stopping…','#fc8');
@@ -4305,8 +4504,8 @@ async function doBasicStep(byline){
   if(ok)setTimeout(()=>{basicRefresh();refresh();},120);}
 
 // Resume / pause the emulator from the BASIC tab.
-function basicRun(){post(API_BASE+'/api/config',{paused:false}).then(()=>setTimeout(()=>{refresh();basicRefresh();},80));}
-function basicPause(){post(API_BASE+'/api/config',{paused:true}).then(()=>setTimeout(()=>{refresh();basicRefresh();},80));}
+function basicRun(){post(API_BASE+'/api/config',{paused:false}).catch(e=>setBasicStatus(e.message,'#f64')).then(()=>setTimeout(()=>{refresh();basicRefresh();},80));}
+function basicPause(){post(API_BASE+'/api/config',{paused:true}).catch(e=>setBasicStatus(e.message,'#f64')).then(()=>setTimeout(()=>{refresh();basicRefresh();},80));}
 // Single toggle: running → pause (enter debug); paused → continue.
 function basicToggleRun(){ if(g_paused) basicRun(); else basicPause(); }
 // Reflect run/pause state on the BASIC controls: toggle label + step buttons

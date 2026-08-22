@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AMSpiriT — Lua Console</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{background:#1c1c1c;color:#d0d0d0;font:13px/1.5 'Courier New',monospace;
+     height:100vh;display:flex;flex-direction:column;overflow:hidden}
+header{display:flex;align-items:center;gap:10px;padding:6px 10px;
+       border-bottom:1px solid #333;background:#212121;flex:0 0 auto;flex-wrap:wrap}
+h1{color:#6af;font-size:.95em;font-weight:bold}
+.spacer{flex:1}
+.dot{width:8px;height:8px;border-radius:50%;background:#555;display:inline-block}
+.dot.on{background:#6c6}
+.dot.busy{background:#ca6}
+.dot.off{background:#c55}
+#conn{color:#888;font-size:.82em}
+button{background:#2a3a5a;color:#c0d0f0;border:1px solid #3a4a6a;
+       padding:2px 10px;border-radius:2px;cursor:pointer;font:inherit;font-size:.82em}
+button:hover{background:#3a4a6a}
+button:active{background:#4a5a7a}
+button.red{background:#4a2020;border-color:#6a3030;color:#f0b0b0}
+button.red:hover{background:#5a2828}
+main{flex:1;display:flex;min-height:0}
+/* One scrolling column for the whole session: past lines and the line being
+   typed live in the same flow, the way a terminal does. The input is a
+   borderless textarea sitting as the last row of that flow. */
+/* pre-wrap belongs on the transcript lines, NOT on this container: the
+   whitespace between the child elements in the markup would then render as
+   text, showing up as a blank line above the prompt. */
+#term{flex:1;overflow-y:auto;padding:8px 10px;min-width:0;cursor:text}
+#term>div>div,#term .in{white-space:pre-wrap;word-break:break-word}
+#term .in{color:#8bf}
+#term .out{color:#bbb}
+#term .val{color:#6c9}
+#term .err{color:#e77}
+#term .note{color:#777;font-style:italic}
+.ps{color:#556;user-select:none}
+#inputline{display:flex;align-items:flex-start}
+#cmd{flex:1;background:transparent;color:#8bf;border:0;outline:0;font:inherit;
+     resize:none;overflow:hidden;line-height:1.5;padding:0}
+aside{width:360px;flex:0 0 auto;border-left:1px solid #333;background:#1f1f1f;
+      display:flex;flex-direction:column;min-height:0}
+aside.hidden{display:none}
+#refhead{display:flex;gap:6px;align-items:center;padding:5px 8px;background:#232323;
+         border-bottom:1px solid #333;flex:0 0 auto}
+#refhead span{color:#89b;font-size:.72em;text-transform:uppercase;letter-spacing:1px}
+#refq{flex:1;min-width:0;background:#141414;color:#ccc;border:1px solid #3a3a3a;
+      border-radius:2px;padding:1px 6px;font:inherit;font-size:.8em}
+#reflist{flex:1;overflow-y:auto;padding:4px 0 10px}
+#reflist h3{color:#7a8;font-size:.7em;text-transform:uppercase;letter-spacing:1px;
+            padding:8px 8px 2px;border-bottom:1px solid #2b2b2b;margin-bottom:2px}
+#reflist .grpnote{color:#666;font-size:.75em;padding:2px 8px 4px;font-style:italic}
+.fn{padding:1px 8px;cursor:pointer;font-size:.8em}
+.fn:hover{background:#2a3040}
+.fn code{color:#8bf}
+.fn i{color:#777;font-style:normal;display:block;font-size:.95em;padding-left:10px}
+/* Marked when the live Lua state does not actually expose the name: the panel
+   says so instead of quietly lying. */
+.fn.gone code{color:#a66;text-decoration:line-through}
+.fn.extra code{color:#cb8}
+.hint{color:#666;font-size:.78em;padding:8px}
+.hint kbd{background:#2a2a2a;border:1px solid #3a3a3a;border-radius:2px;padding:0 3px;color:#9ab}
+@media (max-width:860px){aside{display:none}}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>AMSpiriT — Lua Console</h1>
+  <span class="dot" id="dot"></span><span id="conn">connecting…</span>
+  <span class="spacer"></span>
+  <button onclick="clearLog()" title="Ctrl+L">Clear log</button>
+  <button class="red" onclick="resetSession()">Reset session</button>
+  <button onclick="toggleRef()">API</button>
+  <button onclick="openUi()">Debug UI ↗</button>
+</header>
+
+<main>
+  <div id="term"><div id="log"></div><div id="inputline"><span class="ps">&gt;&nbsp;</span><textarea id="cmd" rows="1"
+        spellcheck="false" autocomplete="off"
+        placeholder="Lua — Enter to run, Shift+Enter for a new line, Tab to complete"></textarea></div>
+  </div>
+
+  <aside id="ref">
+    <div id="refhead">
+      <span>API</span>
+      <input id="refq" placeholder="filter…" spellcheck="false" autocomplete="off">
+    </div>
+    <div id="reflist"></div>
+    <div class="hint">
+      Click a name to insert it. <kbd>Tab</kbd> completes from the live state,
+      <kbd>↑</kbd><kbd>↓</kbd> walk history, <kbd>Ctrl</kbd>+<kbd>L</kbd> clears.<br><br>
+      Full reference: <code>src/doc/scripting.md</code>.
+    </div>
+  </aside>
+</main>
+
+<script>
+// ── API base ────────────────────────────────────────────────────────────────
+// Same detection as amspirit-lite.html: this page must work both served by the
+// emulator (at /console) and opened straight from disk, where relative URLs
+// would resolve to file://.
+const EMU_DEFAULT_PORT = 8765;
+const API_BASE = (() => {
+  const l = window.location;
+  if (l.protocol === 'file:') return 'http://127.0.0.1:' + EMU_DEFAULT_PORT;
+  const port = parseInt(l.port) || (l.protocol === 'https:' ? 443 : 80);
+  if ((l.hostname === '127.0.0.1' || l.hostname === 'localhost' || l.hostname === '[::1]')
+      && port === EMU_DEFAULT_PORT) return '';
+  return 'http://127.0.0.1:' + EMU_DEFAULT_PORT;
+})();
+
+const $ = id => document.getElementById(id);
+const termEl = $('term'), logEl = $('log'), cmdEl = $('cmd');
+
+// ── transcript ──────────────────────────────────────────────────────────────
+function toBottom() { termEl.scrollTop = termEl.scrollHeight; }
+
+function add(text, cls) {
+  const d = document.createElement('div');
+  d.className = cls;
+  // Echoed input carries the same prompt as the live line below it, so the
+  // session reads as one continuous stream rather than two panes.
+  if (cls === 'in') {
+    const ps = document.createElement('span');
+    ps.className = 'ps';
+    ps.textContent = '> ';
+    d.appendChild(ps);
+    d.appendChild(document.createTextNode(text));
+  } else {
+    d.textContent = text;
+  }
+  logEl.appendChild(d);
+  toBottom();
+  return d;
+}
+function clearLog() { logEl.textContent = ''; toBottom(); }
+
+// Clicking anywhere in the transcript puts the caret back on the prompt —
+// except when selecting text, so copying a result still works.
+termEl.addEventListener('mouseup', () => {
+  if (!window.getSelection().toString()) cmdEl.focus();
+});
+
+// ── connection state ────────────────────────────────────────────────────────
+let g_connected = false;
+function setState(kind, text) {
+  $('dot').className = 'dot ' + kind;
+  $('conn').textContent = text;
+}
+async function ping() {
+  try {
+    const r = await fetch(API_BASE + '/api/ping');
+    const d = await r.json();
+    g_connected = true;
+    setState('on', 'AMSpiriT ' + (d.lite || '') + ' · ' + Math.round(d.emu.fps) + ' fps'
+                   + (d.emu.paused ? ' · paused' : ''));
+  } catch (e) {
+    g_connected = false;
+    setState('off', 'not connected — start the emulator with --web-server');
+  }
+}
+
+// ── eval: POST issues a seq, then poll GET until done ───────────────────────
+// The endpoint is request/response because a console line has an answer; see
+// doc/web_server_api.md. `refused` means nothing ran, which is not an error in
+// the line itself — worth saying differently.
+let g_busy = false;
+
+async function evalLua(src, opts = {}) {
+  const quiet = !!opts.quiet;
+  if (g_busy) { if (!quiet) add('busy — a line is still running', 'note'); return null; }
+  g_busy = true;
+  try {
+    const post = await fetch(API_BASE + '/api/eval', {
+      method: 'POST', headers: {'Content-Type': 'text/plain'}, body: src
+    });
+    const pd = await post.json();
+    if (!post.ok || !pd.seq) {
+      if (!quiet) add(pd.error || 'the emulator refused the line', 'err');
+      return null;
+    }
+    // Two frames minimum before `done`: eval() prepares the coroutine, tick()
+    // runs it. Poll on a frame-ish cadence rather than hammering.
+    for (let i = 0; i < 3000; ++i) {
+      const g = await fetch(API_BASE + '/api/eval?seq=' + pd.seq);
+      const d = await g.json();
+      if (d.known === false) {
+        // Only the latest result is kept, so this means something else really
+        // did evaluate in between — it is no longer the normal "not started
+        // yet" case, which the endpoint now reports as done:false.
+        if (!quiet) add('result superseded by another eval', 'note');
+        return null;
+      }
+      if (d.done) return d;
+      await new Promise(r => setTimeout(r, 20));
+    }
+    if (!quiet) add('timed out waiting for the result', 'err');
+    return null;
+  } catch (e) {
+    if (!quiet) add('connection lost: ' + e.message, 'err');
+    return null;
+  } finally {
+    g_busy = false;
+  }
+}
+
+function report(d) {
+  if (!d) return;
+  if (d.output) add(d.output.replace(/\n$/, ''), 'out');
+  if (d.refused) { add(d.error || 'busy', 'note'); return; }
+  if (d.error) { add(d.error, 'err'); return; }
+  if (d.value) add(d.value, 'val');
+}
+
+// ── history ─────────────────────────────────────────────────────────────────
+const HIST_KEY = 'amspirit.console.history';
+let hist = [];
+try { hist = JSON.parse(localStorage.getItem(HIST_KEY) || '[]'); } catch (e) { hist = []; }
+let histPos = hist.length;      // == length means "editing a fresh line"
+let histDraft = '';
+
+function pushHist(line) {
+  if (line && hist[hist.length - 1] !== line) hist.push(line);
+  if (hist.length > 200) hist = hist.slice(-200);
+  histPos = hist.length;
+  try { localStorage.setItem(HIST_KEY, JSON.stringify(hist)); } catch (e) {}
+}
+
+// ── submit ──────────────────────────────────────────────────────────────────
+async function submit() {
+  const src = cmdEl.value.replace(/\s+$/, '');
+  if (!src) return;
+  add(src, 'in');
+  pushHist(src);
+  cmdEl.value = '';
+  autosize();
+  report(await evalLua(src));
+}
+
+async function resetSession() {
+  try {
+    await fetch(API_BASE + '/api/eval', {method: 'DELETE'});
+    add('session reset — globals forgotten', 'note');
+  } catch (e) { add('connection lost: ' + e.message, 'err'); }
+}
+
+// ── completion ──────────────────────────────────────────────────────────────
+// Completion is asked of the *live* Lua state rather than a hardcoded list, so
+// it knows about the variables you just defined and can never drift from the
+// engine's real API. The chunk below walks a dotted prefix and returns the
+// matching keys, newline-separated.
+const COMPLETE_CHUNK = src => `
+local s = ${JSON.stringify(src)}
+local base, last = s:match("^(.-)([%w_]*)$")
+local tbl, path = _G, base:match("^(.*)%.$")
+if path then
+  for part in path:gmatch("[^%.]+") do
+    if type(tbl) ~= "table" then return "" end
+    tbl = tbl[part]
+  end
+end
+if type(tbl) ~= "table" then return "" end
+local out = {}
+for k, v in pairs(tbl) do
+  if type(k) == "string" and k:sub(1, #last) == last then
+    out[#out+1] = k .. (type(v) == "function" and "(" or "")
+  end
+end
+table.sort(out)
+return table.concat(out, "\\n")`;
+
+function currentWord() {
+  const upto = cmdEl.value.slice(0, cmdEl.selectionStart);
+  const m = upto.match(/[A-Za-z_][A-Za-z0-9_.]*$/);
+  return m ? m[0] : '';
+}
+
+async function complete() {
+  const word = currentWord();
+  const d = await evalLua(COMPLETE_CHUNK(word), {quiet: true});
+  if (!d || d.error || !d.value) return;
+  const names = d.value.split('\n').filter(Boolean);
+  if (!names.length) return;
+
+  const dot = word.lastIndexOf('.');
+  const stem = dot >= 0 ? word.slice(0, dot + 1) : '';
+  const typed = dot >= 0 ? word.slice(dot + 1) : word;
+
+  // Insert the longest shared prefix — one Tab gets you as far as the names
+  // agree, a second Tab lists the alternatives.
+  let common = names[0].replace(/\($/, '');
+  for (const n of names) {
+    const c = n.replace(/\($/, '');
+    let i = 0;
+    while (i < common.length && i < c.length && common[i] === c[i]) ++i;
+    common = common.slice(0, i);
+  }
+  if (names.length === 1) common = names[0];
+
+  if (common.length > typed.length) {
+    const start = cmdEl.selectionStart - typed.length;
+    cmdEl.value = cmdEl.value.slice(0, start) + common + cmdEl.value.slice(cmdEl.selectionStart);
+    const caret = start + common.length;
+    cmdEl.setSelectionRange(caret, caret);
+    autosize();
+  } else if (names.length > 1) {
+    add(names.map(n => stem + n).join('   '), 'note');
+  }
+}
+
+// ── input handling ──────────────────────────────────────────────────────────
+function autosize() {
+  // No cap and no inner scrollbar: the input is part of the transcript, so it
+  // grows and the page scrolls, like a shell heredoc.
+  cmdEl.rows = cmdEl.value.split('\n').length;
+  toBottom();
+}
+
+cmdEl.addEventListener('input', autosize);
+cmdEl.addEventListener('focus', toBottom);
+cmdEl.addEventListener('keydown', ev => {
+  if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); submit(); return; }
+  if (ev.key === 'Tab') { ev.preventDefault(); complete(); return; }
+  if (ev.key === 'l' && ev.ctrlKey) { ev.preventDefault(); clearLog(); return; }
+  // Arrows walk history only from a single-line edit, so they stay usable for
+  // moving around a multi-line chunk.
+  const multi = cmdEl.value.includes('\n');
+  if (ev.key === 'ArrowUp' && !multi && histPos > 0) {
+    ev.preventDefault();
+    if (histPos === hist.length) histDraft = cmdEl.value;
+    cmdEl.value = hist[--histPos];
+    autosize();
+  } else if (ev.key === 'ArrowDown' && !multi && histPos < hist.length) {
+    ev.preventDefault();
+    cmdEl.value = (++histPos === hist.length) ? histDraft : hist[histPos];
+    autosize();
+  }
+});
+
+// ── API reference panel ─────────────────────────────────────────────────────
+// A compact index, not a copy of scripting.md: signature plus one line, so the
+// prompt stays the main thing on screen. The full prose lives in
+// src/doc/scripting.md; the debug UI is one button away for everything else.
+const REF = [
+  ['Waits', 'Every wait yields to the emulator and resumes on a later frame.', [
+    ['wait(usec)', 'wait N microseconds (rounded up to the next frame)'],
+    ['wait_frames(n)', 'wait N frames (~20 ms each at 50 Hz)'],
+    ['wait_vsyncoffon()', 'wait for the next VSYNC rising edge'],
+    ['wait_driveonoff(n)', 'wait N drive-motor ON/OFF cycles (default 1)'],
+    ['wait_ssm0000()', 'wait for the ED 00 ED 00 sequence in the Z80'],
+  ]],
+  ['Machine', '', [
+    ['reset()', 'hard reset; reset("soft") for a soft one'],
+    ['crtc_select(n)', 'CRTC type 0-4, then reinitialise'],
+    ['cpc_model(n)', 'CPC model (CORE_CPC_*), then reinitialise'],
+    ['poke(addr, value)', 'write one byte to CPC RAM'],
+    ['csl_load(path)', 'run a CSL/Lua file synchronously (no wait inside)'],
+    ['csl_version(s)', 'log the script version (informational)'],
+  ]],
+  ['Media', '', [
+    ['disk_insert(path)', 'insert a DSK/HFE/IPF (optional first arg: drive)'],
+    ['disk_dir(path)', 'search prefix for disk_insert'],
+    ['tape_insert(path)', 'insert a CDT/WAV cassette'],
+    ['tape_dir(path)', 'search prefix for tape_insert'],
+    ['tape_play()', 'start the tape'],
+    ['tape_stop()', 'stop the tape'],
+    ['tape_rewind()', 'rewind the tape'],
+    ['snapshot_load(path)', 'load an SNA snapshot'],
+    ['snapshot()', 'save a snapshot'],
+    ['snapshot_name(name)', 'filename without extension'],
+    ['snapshot_dir(path)', 'destination directory'],
+  ]],
+  ['Keyboard', '', [
+    ['key_output(text)', 'type text into the CPC, waiting for it to land'],
+    ['key_delay(press, between)', 'press/gap timings in µs (optional 3rd: CR)'],
+    ['keyboard_write(b0, ..., b15)', 'write the 16-byte keyboard matrix directly'],
+  ]],
+  ['Screen', '', [
+    ['screenshot()', 'save a PNG'],
+    ['screenshot_name(name)', 'filename without extension'],
+    ['screenshot_dir(path)', 'destination directory'],
+  ]],
+  ['Files — fs.*', 'Jailed: paths are relative to fs.root(), no "..", no absolute paths.', [
+    ['fs.write(name, data)', 'write, binary-safe → true, or nil + error'],
+    ['fs.append(name, data)', 'append to an existing file'],
+    ['fs.read(name)', '→ contents, or nil + error'],
+    ['fs.exists(name)', '→ boolean'],
+    ['fs.remove(name)', 'delete → true, or nil + error'],
+    ['fs.root()', '→ the absolute root directory'],
+  ]],
+  ['Hardware — cpc.*', '', [
+    ['cpc.getZ80()', '→ table of every Z80 register (PC, SP, A, F, ...)'],
+    ['cpc.setZ80(t)', 'partial update; unlisted registers keep their value'],
+    ['cpc.getRam(addr, len)', '→ array of bytes'],
+    ['cpc.setRam(addr, data)', 'write an array of bytes'],
+    ['cpc.getGateArray()', '→ pen/border/mode/ROM banking state'],
+    ['cpc.getPSG()', '→ the 16 AY-3-8912 registers'],
+    ['cpc.getFDC()', '→ floppy controller state (motor, track, ...)'],
+    ['cpc.getAudio()', '→ current audio output state'],
+    ['cpc.getKeyMatrix()', '→ the 16 keyboard matrix bytes'],
+    ['cpc.getKeymap()', '→ the live host-key to CPC-key mapping'],
+    ['cpc.getBasicState()', '→ current BASIC line/statement/pointers'],
+    ['cpc.exportBasic()', '→ the BASIC program as source text'],
+    ['cpc.injectBasic(src)', 'tokenise and inject BASIC source into RAM'],
+    ['cpc.reset()', 'same as reset()'],
+    ['cpc.pause(on)', 'pause or resume emulation'],
+    ['cpc.wait(usec)', 'alias of wait()'],
+    ['cpc.waitFrames(n)', 'alias of wait_frames()'],
+    ['cpc.waitVSync()', 'alias of wait_vsyncoffon()'],
+    ['cpc.waitDrive(n)', 'alias of wait_driveonoff()'],
+  ]],
+  ['Emulator — amspirit.*', '', [
+    ['amspirit.getVersion()', '→ the core version string'],
+    ['amspirit.getConfig()', '→ the live emulator configuration'],
+    ['amspirit.screenshot(dir, name)', 'screenshot with an explicit destination'],
+  ]],
+  ['Lua', 'Sandboxed over the API: no io, os.execute, package, debug or require.', [
+    ['print(...)', 'tab-separated; captured and shown here'],
+  ]],
+];
+
+// Names the live state exposes but this table does not mention — filled in by
+// checkRefDrift(), so the panel cannot silently fall behind the engine.
+let g_refExtra = [];
+let g_refGone = new Set();
+
+function insertAtCaret(text) {
+  const a = cmdEl.selectionStart, b = cmdEl.selectionEnd;
+  cmdEl.value = cmdEl.value.slice(0, a) + text + cmdEl.value.slice(b);
+  const caret = a + text.length;
+  cmdEl.setSelectionRange(caret, caret);
+  cmdEl.focus();
+  autosize();
+}
+
+function refEntry(sig, desc, cls) {
+  const name = sig.split('(')[0];
+  const d = document.createElement('div');
+  d.className = 'fn' + (cls ? ' ' + cls : '');
+  const c = document.createElement('code');
+  c.textContent = sig;
+  d.appendChild(c);
+  if (desc) {
+    const i = document.createElement('i');
+    i.textContent = desc;
+    d.appendChild(i);
+  }
+  if (cls === 'gone') d.title = 'documented here but not present in the live Lua state';
+  if (cls === 'extra') d.title = 'present in the live Lua state but not in this table';
+  // Insert the call with the caret between the parentheses when it takes args.
+  d.onclick = () => {
+    const args = sig.slice(sig.indexOf('(') + 1, sig.lastIndexOf(')'));
+    insertAtCaret(name + '(' + (args ? '' : ')'));
+    if (args) { cmdEl.value += ')'; cmdEl.setSelectionRange(cmdEl.value.length - 1, cmdEl.value.length - 1); }
+  };
+  return d;
+}
+
+function renderRef() {
+  const q = $('refq').value.trim().toLowerCase();
+  const list = $('reflist');
+  list.textContent = '';
+  const match = (sig, desc) => !q || sig.toLowerCase().includes(q) || desc.toLowerCase().includes(q);
+
+  for (const [group, note, entries] of REF) {
+    const hits = entries.filter(([sig, desc]) => match(sig, desc));
+    if (!hits.length) continue;
+    const h = document.createElement('h3');
+    h.textContent = group;
+    list.appendChild(h);
+    if (note && !q) {
+      const n = document.createElement('div');
+      n.className = 'grpnote';
+      n.textContent = note;
+      list.appendChild(n);
+    }
+    for (const [sig, desc] of hits)
+      list.appendChild(refEntry(sig, desc, g_refGone.has(sig.split('(')[0]) ? 'gone' : ''));
+  }
+
+  const extra = g_refExtra.filter(n => !q || n.toLowerCase().includes(q));
+  if (extra.length) {
+    const h = document.createElement('h3');
+    h.textContent = 'Undocumented';
+    list.appendChild(h);
+    if (!q) {
+      const n = document.createElement('div');
+      n.className = 'grpnote';
+      n.textContent = 'in the live state, absent from this table';
+      list.appendChild(n);
+    }
+    for (const n of extra) list.appendChild(refEntry(n + '()', '', 'extra'));
+  }
+}
+
+// One eval at startup reconciles the table with what the engine really exposes.
+// Drift becomes visible instead of misleading: missing names are struck out,
+// unknown ones get their own group.
+const DRIFT_CHUNK = `
+local want = {}
+local out = {}
+for _, t in ipairs({"", "cpc", "fs", "amspirit"}) do
+  local tbl = (t == "") and _G or _G[t]
+  if type(tbl) == "table" then
+    for k, v in pairs(tbl) do
+      if type(k) == "string" and type(v) == "function" then
+        out[#out+1] = (t == "" and "" or t .. ".") .. k
+      end
+    end
+  end
+end
+table.sort(out)
+return table.concat(out, " ")`;
+
+// Globals Lua itself provides — not part of the emulator API, so their absence
+// from the table is not drift worth reporting.
+const LUA_BUILTINS = new Set(['assert','collectgarbage','error','getmetatable','ipairs',
+  'load','next','pairs','pcall','rawequal','rawget','rawlen','rawset','select',
+  'setmetatable','tonumber','tostring','type','unpack','warn','xpcall','require','dofile','loadfile',
+  'gate_array','memory_exp','rom_dir','rom_config','snapshot_version','key_from_file']);
+
+async function checkRefDrift() {
+  const d = await evalLua(DRIFT_CHUNK, {quiet: true});
+  if (!d || d.error || !d.value) return;
+  const live = new Set(d.value.split(' ').filter(Boolean));
+  const documented = new Set();
+  for (const [, , entries] of REF)
+    for (const [sig] of entries) documented.add(sig.split('(')[0]);
+
+  g_refGone = new Set([...documented].filter(n => !live.has(n) && n !== 'print'));
+  g_refExtra = [...live].filter(n => !documented.has(n) && !LUA_BUILTINS.has(n)).sort();
+  renderRef();
+}
+
+function toggleRef() { $('ref').classList.toggle('hidden'); }
+function openUi() { window.open(API_BASE + '/', '_blank'); }
+
+// ── boot ────────────────────────────────────────────────────────────────────
+add('AMSpiriT Lua console — globals persist between lines.', 'note');
+add('Scripts sent over the API are sandboxed: no io/os.execute/package/debug.', 'note');
+add('Files go through fs.write/fs.read, rooted at fs.root().', 'note');
+ping();
+setInterval(ping, 2000);
+renderRef();
+$('refq').addEventListener('input', renderRef);
+checkRefDrift();
+cmdEl.focus();
+</script>
+</body>
+</html>
