@@ -113,14 +113,14 @@ See the [Web/REST API reference](docs/web_server_api.md) for the full endpoint l
 
 ### Debug GUI (Python/Tkinter)
 
-[`amspirit-lite-debug-gui/`](examples/amspirit-lite-debug-gui/) is a desktop
+[`amspirit-lite-python-gui/`](tools/amspirit-lite-python-gui/) is a desktop
 GUI counterpart to the web server test page above, covering the same debug
 API (keyboard, BASIC editor/stepping, CPU registers/RAM/breakpoints, a live
 RAM heatmap, audio waveform, disk, scripting, CRT config) as a standalone
 Python application instead of a browser page. Built with the Python
 standard library only (Tkinter) — no `pip install` needed. It's the first
 example here shipped as its own subdirectory rather than a single flat
-file; see its own [README](examples/amspirit-lite-debug-gui/README.md) for
+file; see its own [README](examples/amspirit-lite-python-gui/README.md) for
 requirements and usage.
 
 ---
