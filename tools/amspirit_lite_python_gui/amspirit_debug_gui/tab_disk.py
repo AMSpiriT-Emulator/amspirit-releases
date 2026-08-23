@@ -32,15 +32,15 @@ class DiskTab(ttk.Frame):
         bin_frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 10))
         row = ttk.Frame(bin_frame)
         row.pack(side=tk.TOP, fill=tk.X)
-        ttk.Label(row, text="Load address (hex, headerless .bin only):").pack(side=tk.LEFT)
+        ttk.Label(row, text="Load address (hex, headerless .bin only):", style="Muted.TLabel").pack(side=tk.LEFT)
         self._load_addr_var = tk.StringVar()
         ttk.Entry(row, textvariable=self._load_addr_var, width=8).pack(side=tk.LEFT, padx=(2, 8))
-        ttk.Label(row, text="Entry point (hex, optional):").pack(side=tk.LEFT)
+        ttk.Label(row, text="Entry point (hex, optional):", style="Muted.TLabel").pack(side=tk.LEFT)
         self._entry_addr_var = tk.StringVar()
         ttk.Entry(row, textvariable=self._entry_addr_var, width=8).pack(side=tk.LEFT, padx=(2, 0))
 
         self._status_var = tk.StringVar()
-        ttk.Label(self, textvariable=self._status_var, foreground="#555").pack(side=tk.TOP, anchor="w")
+        ttk.Label(self, textvariable=self._status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w")
 
     def _create(self, drive: int):
         def done(_result, error):

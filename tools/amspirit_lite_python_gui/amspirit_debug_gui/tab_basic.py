@@ -12,6 +12,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from amspirit_debug_gui import theme
 from amspirit_debug_gui.util import parse_basic_arrays, parse_basic_vars
 
 
@@ -27,7 +28,7 @@ class BasicTab(ttk.Frame):
         info = ttk.Frame(self)
         info.pack(side=tk.TOP, fill=tk.X)
         self._info_var = tk.StringVar(value="(no BASIC state read yet)")
-        ttk.Label(info, textvariable=self._info_var, font=("Courier New", 9)).pack(side=tk.LEFT)
+        ttk.Label(info, textvariable=self._info_var, font=theme.mono(9)).pack(side=tk.LEFT)
         ttk.Button(info, text="Refresh state", command=self._refresh_state).pack(side=tk.LEFT, padx=(10, 0))
 
         controls = ttk.Frame(self)
@@ -35,14 +36,14 @@ class BasicTab(ttk.Frame):
         ttk.Button(controls, text="Step statement", command=lambda: self._step(line=False)).pack(side=tk.LEFT)
         ttk.Button(controls, text="Step line", command=lambda: self._step(line=True)).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(controls, text="◀ Step back", command=self._tl_back).pack(side=tk.LEFT, padx=(6, 0))
-        ttk.Label(controls, text="  Run to line:").pack(side=tk.LEFT)
+        ttk.Label(controls, text="  Run to line:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._runto_var = tk.StringVar()
         ttk.Entry(controls, textvariable=self._runto_var, width=6).pack(side=tk.LEFT)
         ttk.Button(controls, text="Go", command=self._run_to).pack(side=tk.LEFT, padx=(4, 0))
 
         bp_row = ttk.Frame(self)
         bp_row.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
-        ttk.Label(bp_row, text="Line breakpoints (comma-separated):").pack(side=tk.LEFT)
+        ttk.Label(bp_row, text="Line breakpoints (comma-separated):", style="Muted.TLabel").pack(side=tk.LEFT)
         self._bp_var = tk.StringVar()
         ttk.Entry(bp_row, textvariable=self._bp_var, width=24).pack(side=tk.LEFT, padx=(4, 6))
         ttk.Button(bp_row, text="Apply", command=self._apply_bp).pack(side=tk.LEFT)
@@ -55,14 +56,18 @@ class BasicTab(ttk.Frame):
         sub.add(self._build_variables(sub), text="Variables")
 
         self._status_var = tk.StringVar()
-        ttk.Label(self, textvariable=self._status_var, foreground="#555").pack(side=tk.TOP, anchor="w", pady=(6, 0))
+        ttk.Label(self, textvariable=self._status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(6, 0))
 
     def _build_listing(self, parent):
         frame = ttk.Frame(parent, padding=6)
         ttk.Button(frame, text="Refresh listing", command=self._refresh_listing).pack(side=tk.TOP, anchor="w")
-        self._listing_text = tk.Text(frame, font=("Courier New", 10))
+        self._listing_text = tk.Text(frame, font=theme.mono(10))
         self._listing_text.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(6, 0))
-        self._listing_text.tag_configure("current", background="#fff3b0")
+        # Was a pale-yellow highlight, which only works on a light listing.
+        # The dark equivalent is the HTML's own "you are here" pairing:
+        # a near-black amber wash under amber text.
+        self._listing_text.tag_configure("current", background=theme.C["flash_bg"],
+                                         foreground=theme.C["flash_accent"])
         self._listing_text.configure(state=tk.DISABLED)
         return frame
 
@@ -84,7 +89,7 @@ class BasicTab(ttk.Frame):
             side=tk.LEFT, padx=(6, 0)
         )
 
-        self._editor = tk.Text(frame, font=("Courier New", 10))
+        self._editor = tk.Text(frame, font=theme.mono(10))
         self._editor.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(6, 0))
         self._editor.insert("1.0", '10 PRINT "HELLO"\n20 GOTO 10\n')
         return frame
@@ -96,14 +101,14 @@ class BasicTab(ttk.Frame):
         ttk.Button(button_row, text="Refresh variables", command=self._refresh_vars).pack(side=tk.LEFT)
         ttk.Button(button_row, text="Scan pointers", command=self._scan_pointers).pack(side=tk.LEFT, padx=(8, 0))
 
-        ttk.Label(frame, text="Scalars:").pack(side=tk.TOP, anchor="w", pady=(8, 2))
+        ttk.Label(frame, text="Scalars:", style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(8, 2))
         self._vars_tree = ttk.Treeview(frame, columns=("type", "value", "addr"), show="tree headings", height=8)
         self._vars_tree.heading("#0", text="Name")
         for col, label in (("type", "Type"), ("value", "Value"), ("addr", "Addr")):
             self._vars_tree.heading(col, text=label)
         self._vars_tree.pack(side=tk.TOP, fill=tk.X)
 
-        ttk.Label(frame, text="Arrays:").pack(side=tk.TOP, anchor="w", pady=(8, 2))
+        ttk.Label(frame, text="Arrays:", style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(8, 2))
         self._arrays_tree = ttk.Treeview(
             frame, columns=("type", "dims", "elements", "addr"), show="tree headings", height=6
         )

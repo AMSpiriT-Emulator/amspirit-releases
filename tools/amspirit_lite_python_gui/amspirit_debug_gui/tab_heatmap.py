@@ -17,7 +17,20 @@ import array
 import tkinter as tk
 from tkinter import ttk
 
+from amspirit_debug_gui import theme
 from amspirit_debug_gui.util import ThreadSafeMirror
+
+# Identity colours, not theme colours: each one says "this dot is PC" and is
+# the same hue amspirit-lite.html uses. Deliberately not in theme.py, which
+# owns surfaces and roles -- these belong to the register they name. Defined
+# once because the legend and the bitmap must agree or the overlay lies.
+_OVERLAYS = (
+    ("PC", "#00ff44"),
+    ("SP", "#00ffff"),
+    ("HL", "#ffff00"),
+    ("IX", "#ff8800"),
+    ("IY", "#ff44ff"),
+)
 
 _STOPS = [
     (0x0C, 0x0C, 0x0C),
@@ -67,16 +80,16 @@ class HeatmapTab(ttk.Frame):
     def _build(self):
         top = ttk.Frame(self)
         top.pack(side=tk.TOP, fill=tk.X)
-        ttk.Label(top, text="Bank:").pack(side=tk.LEFT)
+        ttk.Label(top, text="Bank:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._bank_var = tk.IntVar(value=0)
         ttk.Spinbox(top, from_=0, to=7, width=3, textvariable=self._bank_var, command=self._reset_baseline).pack(
             side=tk.LEFT, padx=(2, 10)
         )
-        ttk.Label(top, text="Mode:").pack(side=tk.LEFT)
+        ttk.Label(top, text="Mode:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._mode_var = tk.StringVar(value="accumulate")
         ttk.Combobox(top, textvariable=self._mode_var, values=["accumulate", "instant"], width=10,
                      state="readonly").pack(side=tk.LEFT, padx=(2, 10))
-        ttk.Label(top, text="Decay:").pack(side=tk.LEFT)
+        ttk.Label(top, text="Decay:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._decay_var = tk.StringVar(value="0.92")
         ttk.Combobox(top, textvariable=self._decay_var, values=["0.80", "0.92", "0.98", "1.00"], width=6,
                      state="readonly").pack(side=tk.LEFT, padx=(2, 10))
@@ -89,22 +102,31 @@ class HeatmapTab(ttk.Frame):
 
         overlay_row = ttk.Frame(self)
         overlay_row.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
-        ttk.Label(overlay_row, text="Overlay:").pack(side=tk.LEFT)
-        for name, color in (("PC", "#00ff44"), ("SP", "#00ffff"), ("HL", "#ffff00"), ("IX", "#ff8800"), ("IY", "#ff44ff")):
+        ttk.Label(overlay_row, text="Overlay:", style="Muted.TLabel").pack(side=tk.LEFT)
+        for name, color in _OVERLAYS:
             var = tk.BooleanVar(value=name in ("PC", "SP"))
             self._overlay_vars[name] = var
-            cb = tk.Checkbutton(overlay_row, text=name, variable=var, foreground=color, selectcolor="#222")
+            # Classic Checkbutton, not ttk: only this one can carry a
+            # per-item foreground, and here the colour *is* the legend --
+            # it matches the overlay dot drawn on the bitmap below.
+            cb = tk.Checkbutton(overlay_row, text=name, variable=var,
+                                foreground=color, selectcolor=theme.C["field_bg"],
+                                background=theme.C["bg"],
+                                activebackground=theme.C["bg"],
+                                activeforeground=color)
             cb.pack(side=tk.LEFT, padx=(6, 0))
 
         size = 256 * _ZOOM
-        self._canvas = tk.Canvas(self, width=size, height=size, background="#000", highlightthickness=1)
+        self._canvas = tk.Canvas(self, width=size, height=size,
+                                 background=theme.C["screen_bg"], highlightthickness=1,
+                                 highlightbackground=theme.C["border"])
         self._canvas.pack(side=tk.TOP, pady=(8, 0))
         self._image_item = None
         self._photo = tk.PhotoImage(width=256, height=256)
         self._canvas.bind("<Motion>", self._on_hover)
 
         self._status_var = tk.StringVar()
-        ttk.Label(self, textvariable=self._status_var, foreground="#555").pack(side=tk.TOP, anchor="w", pady=(6, 0))
+        ttk.Label(self, textvariable=self._status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(6, 0))
         self._render()
 
     def _reset_baseline(self):
@@ -174,8 +196,7 @@ class HeatmapTab(ttk.Frame):
             self._canvas.itemconfigure(self._image_item, image=zoomed)
         self._canvas.delete("overlay")
         z80 = getattr(self, "_z80", {})
-        overlay_specs = (("PC", "#00ff44"), ("SP", "#00ffff"), ("HL", "#ffff00"), ("IX", "#ff8800"), ("IY", "#ff44ff"))
-        for name, color in overlay_specs:
+        for name, color in _OVERLAYS:
             if not self._overlay_vars[name].get():
                 continue
             addr = z80.get(name) if name != "HL" else ((z80.get("H", 0) << 8) | z80.get("L", 0))

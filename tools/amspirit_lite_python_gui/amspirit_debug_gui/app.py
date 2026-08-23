@@ -15,6 +15,7 @@ import time
 import tkinter as tk
 from tkinter import ttk
 
+from amspirit_debug_gui import theme
 from amspirit_debug_gui.api_client import AmspiritClient, AmspiritApiError, AmspiritConnectionError
 from amspirit_debug_gui.sse_client import SseClient
 from amspirit_debug_gui.tab_audio import AudioTab
@@ -109,6 +110,11 @@ class DebugGuiApp(tk.Tk):
         self.title("AMSpiriT Lite — Debug GUI")
         self.geometry("1180x760")
 
+        # Before any widget is built: apply_theme() populates the option
+        # database, which classic Tk widgets read once at construction time
+        # and never again. A Text created before this call stays light.
+        theme.apply_theme(self)
+
         self.client = AmspiritClient(host=host, port=port)
         self.poller = PollingManager(self)
         self._tab_keys: list[str] = []
@@ -162,8 +168,7 @@ class DebugGuiApp(tk.Tk):
     def _on_sse_pause(self, data):
         # Immediate badge/button update -- no need to wait for the next
         # 1s "ping" tick, same as amspirit-lite.html's own "pause" listener.
-        self._paused = bool(data.get("paused"))
-        self._pause_btn.configure(text="Resume" if self._paused else "Pause")
+        self._set_paused(bool(data.get("paused")))
 
     # -- shared helpers used by tab modules ----------------------------------
 
@@ -172,7 +177,7 @@ class DebugGuiApp(tk.Tk):
 
     def set_status(self, message: str, error: bool = False):
         self._status_var.set(message)
-        self._status_label.configure(foreground="#c0392b" if error else "#2e7d32")
+        self._status_label.configure(style="Error.TLabel" if error else "Status.TLabel")
 
     @staticmethod
     def describe_error(error: BaseException) -> str:
@@ -184,35 +189,57 @@ class DebugGuiApp(tk.Tk):
 
     # -- connection bar -------------------------------------------------------
 
+    @staticmethod
+    def _kv(parent, name: str) -> tk.StringVar:
+        """One `name: value` pair, coloured like the HTML's `.kv`/`.vv` pair.
+
+        Returns the StringVar holding the value, so callers keep a handle on
+        the half that changes and none on the half that does not.
+        """
+        var = tk.StringVar(value="--")
+        ttk.Label(parent, text=f"{name}:", style="Key.TLabel").pack(side=tk.LEFT)
+        ttk.Label(parent, textvariable=var, style="Value2.TLabel").pack(
+            side=tk.LEFT, padx=(3, 10))
+        return var
+
     def _build_connection_bar(self):
-        bar = ttk.Frame(self, padding=6)
+        bar = ttk.Frame(self, padding=(6, 4))
         bar.pack(side=tk.TOP, fill=tk.X)
 
-        ttk.Label(bar, text="Host:").pack(side=tk.LEFT)
+        ttk.Label(bar, text="Host:", style="Key.TLabel").pack(side=tk.LEFT)
         self._host_var = tk.StringVar(value=self.client.host)
-        ttk.Entry(bar, textvariable=self._host_var, width=14).pack(side=tk.LEFT, padx=(2, 8))
+        ttk.Entry(bar, textvariable=self._host_var, width=14).pack(side=tk.LEFT, padx=(3, 8))
 
-        ttk.Label(bar, text="Port:").pack(side=tk.LEFT)
+        ttk.Label(bar, text="Port:", style="Key.TLabel").pack(side=tk.LEFT)
         self._port_var = tk.StringVar(value=str(self.client.port))
-        ttk.Entry(bar, textvariable=self._port_var, width=6).pack(side=tk.LEFT, padx=(2, 8))
+        ttk.Entry(bar, textvariable=self._port_var, width=6).pack(side=tk.LEFT, padx=(3, 8))
 
         ttk.Button(bar, text="Connect", command=self._on_connect_clicked).pack(side=tk.LEFT, padx=(0, 10))
 
-        self._dot = tk.Canvas(bar, width=12, height=12, highlightthickness=0)
-        self._dot.pack(side=tk.LEFT, padx=(0, 6))
-        self._dot_item = self._dot.create_oval(1, 1, 11, 11, fill="#c0392b", outline="")
+        # The Canvas takes the bar's own background, not the option-database
+        # default: it sits *on* the bar, and a #252525 square on a #1c1c1c bar
+        # would read as a panel rather than as a bare indicator.
+        self._dot = tk.Canvas(bar, width=12, height=12, highlightthickness=0,
+                              background=theme.C["bg"])
+        self._dot.pack(side=tk.LEFT, padx=(0, 8))
+        self._dot_item = self._dot.create_oval(1, 1, 11, 11, fill=theme.C["error"], outline="")
 
-        self._model_var = tk.StringVar(value="Model: --")
-        ttk.Label(bar, textvariable=self._model_var).pack(side=tk.LEFT, padx=(0, 10))
-        self._crtc_var = tk.StringVar(value="CRTC: --")
-        ttk.Label(bar, textvariable=self._crtc_var).pack(side=tk.LEFT, padx=(0, 10))
-        self._fps_var = tk.StringVar(value="FPS: --")
-        ttk.Label(bar, textvariable=self._fps_var).pack(side=tk.LEFT, padx=(0, 14))
+        self._model_var = self._kv(bar, "Model")
+        self._crtc_var = self._kv(bar, "CRTC")
+        self._fps_var = self._kv(bar, "FPS")
+
+        # The HTML's run/pause badge. Redundant with the Pause button's label,
+        # deliberately: the button says what clicking will do, the badge says
+        # what the machine is doing, and only the badge is visible at a glance.
+        self._run_badge = ttk.Label(bar, text="RUN", style="Run.TLabel")
+        self._run_badge.pack(side=tk.LEFT, padx=(0, 10))
 
         self._pause_btn = ttk.Button(bar, text="Pause", command=self._toggle_pause)
         self._pause_btn.pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(bar, text="Soft Reset", command=self._soft_reset).pack(side=tk.LEFT, padx=(0, 4))
-        ttk.Button(bar, text="Hard Reset", command=self._hard_reset).pack(side=tk.LEFT)
+        ttk.Button(bar, text="Soft Reset", style="Amber.TButton",
+                   command=self._soft_reset).pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(bar, text="Hard Reset", style="Danger.TButton",
+                   command=self._hard_reset).pack(side=tk.LEFT)
 
         self._paused = False
 
@@ -228,21 +255,27 @@ class DebugGuiApp(tk.Tk):
 
     def _on_ping(self, result, error):
         if error is not None:
-            self._dot.itemconfigure(self._dot_item, fill="#c0392b")
-            self._model_var.set("Model: --")
-            self._crtc_var.set("CRTC: --")
-            self._fps_var.set("FPS: --")
+            self._dot.itemconfigure(self._dot_item, fill=theme.C["error"])
+            self._model_var.set("--")
+            self._crtc_var.set("--")
+            self._fps_var.set("--")
             self.set_status(f"disconnected: {self.describe_error(error)}", error=True)
             return
-        self._dot.itemconfigure(self._dot_item, fill="#2e7d32")
+        self._dot.itemconfigure(self._dot_item, fill=theme.C["ok"])
         emu = result.get("emu", {})
-        self._model_var.set(f"Model: {MODEL_NAMES.get(emu.get('cpc_model'), '?')}")
-        self._crtc_var.set(f"CRTC: {CRTC_NAMES.get(emu.get('crtc_type'), '?')}")
+        self._model_var.set(MODEL_NAMES.get(emu.get("cpc_model"), "?"))
+        self._crtc_var.set(CRTC_NAMES.get(emu.get("crtc_type"), "?"))
         fps = emu.get("fps")
-        self._fps_var.set(f"FPS: {fps:.1f}" if isinstance(fps, (int, float)) else "FPS: --")
-        self._paused = bool(emu.get("paused"))
-        self._pause_btn.configure(text="Resume" if self._paused else "Pause")
+        self._fps_var.set(f"{fps:.1f}" if isinstance(fps, (int, float)) else "--")
+        self._set_paused(bool(emu.get("paused")))
         self.set_status("connected")
+
+    def _set_paused(self, paused: bool):
+        """Single place that renders the paused flag, whatever reported it."""
+        self._paused = paused
+        self._pause_btn.configure(text="Resume" if paused else "Pause")
+        self._run_badge.configure(text="PAUSE" if paused else "RUN",
+                                  style="Pause.TLabel" if paused else "Run.TLabel")
 
     def _toggle_pause(self):
         self._post_config({"paused": not self._paused})
@@ -342,7 +375,8 @@ class DebugGuiApp(tk.Tk):
         bar = ttk.Frame(self, padding=(6, 2))
         bar.pack(side=tk.BOTTOM, fill=tk.X)
         self._status_var = tk.StringVar(value="starting…")
-        self._status_label = ttk.Label(bar, textvariable=self._status_var)
+        self._status_label = ttk.Label(bar, textvariable=self._status_var,
+                                       style="Status.TLabel")
         self._status_label.pack(side=tk.LEFT)
 
     def _on_close(self):

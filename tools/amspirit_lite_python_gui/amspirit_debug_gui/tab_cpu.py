@@ -12,6 +12,8 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from amspirit_debug_gui import theme
+
 from amspirit_debug_gui.util import ThreadSafeMirror, parse_addr, parse_hex_bytes
 
 Z80_FIELDS = [
@@ -63,9 +65,10 @@ class CpuTab(ttk.Frame):
             for name in row_fields:
                 var = tk.StringVar(value="--")
                 self._z80_labels[name] = var
-                ttk.Label(row_frame, text=f"{name}:", width=5, anchor="e").pack(side=tk.LEFT)
-                ttk.Label(row_frame, textvariable=var, width=7, foreground="#1a5aab",
-                          font=("Courier New", 10, "bold")).pack(side=tk.LEFT, padx=(2, 10))
+                ttk.Label(row_frame, text=f"{name}:", width=5, anchor="e",
+                          style="Muted.TLabel").pack(side=tk.LEFT)
+                ttk.Label(row_frame, textvariable=var, width=7,
+                          style="Value.TLabel").pack(side=tk.LEFT, padx=(2, 10))
 
         btns = ttk.Frame(frame)
         btns.pack(side=tk.TOP, anchor="w", pady=(10, 0))
@@ -73,46 +76,46 @@ class CpuTab(ttk.Frame):
         ttk.Button(btns, text="◀ Step Back", command=self._tl_back).pack(side=tk.LEFT, padx=(6, 0))
 
         self._reg_status_var = tk.StringVar()
-        ttk.Label(frame, textvariable=self._reg_status_var, foreground="#555").pack(side=tk.TOP, anchor="w", pady=(6, 0))
+        ttk.Label(frame, textvariable=self._reg_status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(6, 0))
         return frame
 
     def _build_memory(self, parent):
         frame = ttk.Frame(parent, padding=8)
         row = ttk.Frame(frame)
         row.pack(side=tk.TOP, fill=tk.X)
-        ttk.Label(row, text="Address:").pack(side=tk.LEFT)
+        ttk.Label(row, text="Address:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._mem_addr_var = tk.StringVar(value="0x0000")
         ttk.Entry(row, textvariable=self._mem_addr_var, width=10).pack(side=tk.LEFT, padx=(2, 8))
-        ttk.Label(row, text="Length:").pack(side=tk.LEFT)
+        ttk.Label(row, text="Length:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._mem_len_var = tk.StringVar(value="256")
         ttk.Entry(row, textvariable=self._mem_len_var, width=8).pack(side=tk.LEFT, padx=(2, 8))
-        ttk.Label(row, text="Bank:").pack(side=tk.LEFT)
+        ttk.Label(row, text="Bank:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._mem_bank_var = tk.StringVar(value="0")
         ttk.Entry(row, textvariable=self._mem_bank_var, width=4).pack(side=tk.LEFT, padx=(2, 8))
         ttk.Button(row, text="Read", command=self._read_ram).pack(side=tk.LEFT)
 
         search_row = ttk.Frame(frame)
         search_row.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
-        ttk.Label(search_row, text="Find hex:").pack(side=tk.LEFT)
+        ttk.Label(search_row, text="Find hex:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._search_var = tk.StringVar()
         ttk.Entry(search_row, textvariable=self._search_var, width=24).pack(side=tk.LEFT, padx=(2, 8))
         ttk.Button(search_row, text="Find in dump", command=self._search_dump).pack(side=tk.LEFT)
 
-        self._dump_text = tk.Text(frame, height=24, font=("Courier New", 10), wrap="none")
+        self._dump_text = tk.Text(frame, height=24, font=theme.mono(10), wrap="none")
         self._dump_text.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(8, 0))
         self._dump_text.configure(state=tk.DISABLED)
         self._dump_bytes = b""
         self._dump_base_addr = 0
 
         self._mem_status_var = tk.StringVar()
-        ttk.Label(frame, textvariable=self._mem_status_var, foreground="#555").pack(side=tk.TOP, anchor="w", pady=(4, 0))
+        ttk.Label(frame, textvariable=self._mem_status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(4, 0))
         return frame
 
     def _build_memmap(self, parent):
         frame = ttk.Frame(parent, padding=8)
         row = ttk.Frame(frame)
         row.pack(side=tk.TOP, fill=tk.X)
-        ttk.Label(row, text="ROM/RAM Mapping:").pack(side=tk.LEFT)
+        ttk.Label(row, text="ROM/RAM Mapping:", style="Muted.TLabel").pack(side=tk.LEFT)
         ttk.Button(row, text="Refresh", command=self._refresh_memmap).pack(side=tk.LEFT, padx=(10, 0))
 
         regions_frame = ttk.LabelFrame(frame, text="16 KB Regions", padding=8)
@@ -122,27 +125,27 @@ class CpuTab(ttk.Frame):
 
         info_row = ttk.Frame(frame)
         info_row.pack(side=tk.TOP, fill=tk.X, pady=(8, 0))
-        ttk.Label(info_row, text="RMR:").pack(side=tk.LEFT)
+        ttk.Label(info_row, text="RMR:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._memmap_rmr_var = tk.StringVar(value="--")
-        ttk.Label(info_row, textvariable=self._memmap_rmr_var, font=("Courier New", 10)).pack(side=tk.LEFT, padx=(4, 12))
-        ttk.Label(info_row, text="RAM Mode:").pack(side=tk.LEFT)
+        ttk.Label(info_row, textvariable=self._memmap_rmr_var, font=theme.mono(10)).pack(side=tk.LEFT, padx=(4, 12))
+        ttk.Label(info_row, text="RAM Mode:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._memmap_mode_var = tk.StringVar(value="--")
-        ttk.Label(info_row, textvariable=self._memmap_mode_var, font=("Courier New", 10)).pack(side=tk.LEFT, padx=(4, 12))
-        ttk.Label(info_row, text="RAM Page:").pack(side=tk.LEFT)
+        ttk.Label(info_row, textvariable=self._memmap_mode_var, font=theme.mono(10)).pack(side=tk.LEFT, padx=(4, 12))
+        ttk.Label(info_row, text="RAM Page:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._memmap_page_var = tk.StringVar(value="--")
-        ttk.Label(info_row, textvariable=self._memmap_page_var, font=("Courier New", 10)).pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Label(info_row, textvariable=self._memmap_page_var, font=theme.mono(10)).pack(side=tk.LEFT, padx=(4, 0))
 
         self._memmap_status_var = tk.StringVar()
-        ttk.Label(frame, textvariable=self._memmap_status_var, foreground="#555").pack(side=tk.TOP, anchor="w", pady=(8, 0))
+        ttk.Label(frame, textvariable=self._memmap_status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(8, 0))
         return frame
 
     def _create_region_widget(self, parent, addr, name):
         region_frame = ttk.Frame(parent)
         region_frame.pack(side=tk.TOP, fill=tk.X, pady=2)
-        ttk.Label(region_frame, text=f"{name}:", width=6, font=("Courier New", 10, "bold")).pack(side=tk.LEFT)
+        ttk.Label(region_frame, text=f"{name}:", width=6, style="Key.TLabel").pack(side=tk.LEFT)
         var = tk.StringVar(value="--")
         self._memmap_region_vars[addr] = var
-        ttk.Label(region_frame, textvariable=var, font=("Courier New", 9), foreground="#0066cc").pack(side=tk.LEFT, padx=(4, 0))
+        ttk.Label(region_frame, textvariable=var, style="Value2.TLabel").pack(side=tk.LEFT, padx=(4, 0))
 
     def _refresh_memmap(self):
         def done(result, error):
@@ -171,7 +174,7 @@ class CpuTab(ttk.Frame):
         frame = ttk.Frame(parent, padding=8)
         row = ttk.Frame(frame)
         row.pack(side=tk.TOP, fill=tk.X)
-        ttk.Label(row, text="Z80 breakpoints (comma-separated, hex/decimal/Cx:YYYY):").pack(side=tk.LEFT)
+        ttk.Label(row, text="Z80 breakpoints (comma-separated, hex/decimal/Cx:YYYY):", style="Muted.TLabel").pack(side=tk.LEFT)
         self._bp_var = tk.StringVar()
         ttk.Entry(row, textvariable=self._bp_var).pack(side=tk.TOP, fill=tk.X, pady=(4, 0))
         btns = ttk.Frame(frame)
@@ -180,16 +183,16 @@ class CpuTab(ttk.Frame):
         ttk.Button(btns, text="Clear all", command=self._clear_bp).pack(side=tk.LEFT, padx=(6, 0))
         ttk.Button(btns, text="Clear codemap", command=self._clear_codemap).pack(side=tk.LEFT, padx=(6, 0))
 
-        ttk.Label(frame, text="Last 20 executed instructions (oldest first):").pack(
+        ttk.Label(frame, text="Last 20 executed instructions (oldest first):", style="Muted.TLabel").pack(
             side=tk.TOP, anchor="w", pady=(12, 2)
         )
-        self._history_text = tk.Text(frame, height=14, font=("Courier New", 10))
+        self._history_text = tk.Text(frame, height=14, font=theme.mono(10))
         self._history_text.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self._history_text.configure(state=tk.DISABLED)
         ttk.Button(frame, text="Refresh history", command=self._refresh_history).pack(side=tk.TOP, anchor="w", pady=(6, 0))
 
         self._bp_status_var = tk.StringVar()
-        ttk.Label(frame, textvariable=self._bp_status_var, foreground="#555").pack(side=tk.TOP, anchor="w", pady=(4, 0))
+        ttk.Label(frame, textvariable=self._bp_status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(4, 0))
         return frame
 
     def _build_circuits(self, parent):
@@ -202,7 +205,7 @@ class CpuTab(ttk.Frame):
             sub.add(page, text=label)
             var = tk.StringVar(value="(not read yet)")
             self._circuit_vars[key] = var
-            ttk.Label(page, textvariable=var, justify=tk.LEFT, font=("Courier New", 10)).pack(
+            ttk.Label(page, textvariable=var, justify=tk.LEFT, font=theme.mono(10)).pack(
                 side=tk.TOP, anchor="nw"
             )
             ttk.Button(page, text="Refresh", command=lambda k=key: self._refresh_circuit(k)).pack(
@@ -223,14 +226,17 @@ class CpuTab(ttk.Frame):
             side=tk.LEFT, padx=(8, 0)
         )
 
-        self._screen_label = tk.Label(frame, background="#000", text="(no frame yet)", foreground="#888")
+        # The CPC's own output: black, not the panel grey, so the emulated
+        # border stays distinguishable from the widget it sits in.
+        self._screen_label = tk.Label(frame, background=theme.C["screen_bg"],
+                                      text="(no frame yet)", foreground=theme.C["muted"])
         self._screen_label.pack(side=tk.TOP, pady=(8, 0))
         self._screen_label.bind("<Button-1>", self._on_screen_click)
         self._screen_photo = None
         self._crop = {"x": 0, "y": 0, "w": 1, "h": 1}
 
         self._screen_status_var = tk.StringVar()
-        ttk.Label(frame, textvariable=self._screen_status_var, foreground="#555").pack(side=tk.TOP, anchor="w", pady=(6, 0))
+        ttk.Label(frame, textvariable=self._screen_status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(6, 0))
         return frame
 
     # -- registers ---------------------------------------------------------

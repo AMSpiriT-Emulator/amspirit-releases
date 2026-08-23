@@ -9,6 +9,8 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from amspirit_debug_gui import theme
+
 
 class SettingsTab(ttk.Frame):
     def __init__(self, parent, app):
@@ -20,7 +22,7 @@ class SettingsTab(ttk.Frame):
         top = ttk.Frame(self)
         top.pack(side=tk.TOP, fill=tk.X)
         self._layout_var = tk.StringVar(value="Layout: --")
-        ttk.Label(top, textvariable=self._layout_var, font=("Courier New", 10, "bold")).pack(side=tk.LEFT)
+        ttk.Label(top, textvariable=self._layout_var, font=theme.mono(10, bold=True)).pack(side=tk.LEFT)
         ttk.Button(top, text="Refresh", command=self._refresh).pack(side=tk.LEFT, padx=(10, 0))
 
         self._tree = ttk.Treeview(
@@ -33,7 +35,7 @@ class SettingsTab(ttk.Frame):
         self._tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(8, 0))
 
         self._status_var = tk.StringVar()
-        ttk.Label(self, textvariable=self._status_var, foreground="#555").pack(side=tk.TOP, anchor="w", pady=(6, 0))
+        ttk.Label(self, textvariable=self._status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(6, 0))
 
     def _refresh(self):
         def done(result, error):

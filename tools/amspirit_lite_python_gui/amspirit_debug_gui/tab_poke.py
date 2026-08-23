@@ -27,14 +27,14 @@ class PokeTab(ttk.Frame):
 
         row1 = ttk.Frame(write_frame)
         row1.pack(side=tk.TOP, fill=tk.X)
-        ttk.Label(row1, text="Address:").pack(side=tk.LEFT)
+        ttk.Label(row1, text="Address:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._addr_var = tk.StringVar(value="0x4000")
         ttk.Entry(row1, textvariable=self._addr_var, width=10).pack(side=tk.LEFT, padx=(2, 10))
-        ttk.Label(row1, text="Bank:").pack(side=tk.LEFT)
+        ttk.Label(row1, text="Bank:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._bank_var = tk.StringVar(value="0")
         ttk.Entry(row1, textvariable=self._bank_var, width=4).pack(side=tk.LEFT, padx=(2, 0))
 
-        ttk.Label(write_frame, text="Bytes (hex, spaces/':' allowed):").pack(side=tk.TOP, anchor="w", pady=(8, 2))
+        ttk.Label(write_frame, text="Bytes (hex, spaces/':' allowed):", style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(8, 2))
         self._data_var = tk.StringVar(value="3e 01")
         ttk.Entry(write_frame, textvariable=self._data_var).pack(side=tk.TOP, fill=tk.X)
 
@@ -49,13 +49,13 @@ class PokeTab(ttk.Frame):
 
         exec_frame = ttk.LabelFrame(self, text="Execute at address (no write)", padding=8)
         exec_frame.pack(side=tk.TOP, fill=tk.X, pady=(10, 0))
-        ttk.Label(exec_frame, text="Address:").pack(side=tk.LEFT)
+        ttk.Label(exec_frame, text="Address:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._exec_addr_var = tk.StringVar(value="0x4000")
         ttk.Entry(exec_frame, textvariable=self._exec_addr_var, width=10).pack(side=tk.LEFT, padx=(2, 10))
         ttk.Button(exec_frame, text="Execute", command=self._exec_only).pack(side=tk.LEFT)
 
         self._status_var = tk.StringVar()
-        ttk.Label(self, textvariable=self._status_var, foreground="#555").pack(side=tk.TOP, anchor="w", pady=(10, 0))
+        ttk.Label(self, textvariable=self._status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(10, 0))
 
     def _write(self):
         try:

@@ -42,15 +42,15 @@ class ConfigTab(ttk.Frame):
         model_frame.pack(side=tk.TOP, fill=tk.X)
         row = ttk.Frame(model_frame)
         row.pack(side=tk.TOP, fill=tk.X)
-        ttk.Label(row, text="Model:").pack(side=tk.LEFT)
+        ttk.Label(row, text="Model:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._model_var = tk.StringVar(value=MODEL_CHOICES[2][0])
         ttk.Combobox(row, textvariable=self._model_var, values=[n for n, _ in MODEL_CHOICES], width=8,
                      state="readonly").pack(side=tk.LEFT, padx=(2, 12))
-        ttk.Label(row, text="CRTC:").pack(side=tk.LEFT)
+        ttk.Label(row, text="CRTC:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._crtc_var = tk.StringVar(value=CRTC_CHOICES[0][0])
         ttk.Combobox(row, textvariable=self._crtc_var, values=[n for n, _ in CRTC_CHOICES], width=8,
                      state="readonly").pack(side=tk.LEFT, padx=(2, 12))
-        ttk.Label(row, text="ROM language:").pack(side=tk.LEFT)
+        ttk.Label(row, text="ROM language:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._rom_lang_var = tk.StringVar(value="EN")
         ttk.Combobox(row, textvariable=self._rom_lang_var, values=ROM_LANG_CHOICES, width=5,
                      state="readonly").pack(side=tk.LEFT, padx=(2, 12))
@@ -61,11 +61,11 @@ class ConfigTab(ttk.Frame):
 
         top = ttk.Frame(render_frame)
         top.pack(side=tk.TOP, fill=tk.X)
-        ttk.Label(top, text="Monitor preset:").pack(side=tk.LEFT)
+        ttk.Label(top, text="Monitor preset:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._monitor_var = tk.StringVar()
         self._monitor_combo = ttk.Combobox(top, textvariable=self._monitor_var, width=14, state="readonly")
         self._monitor_combo.pack(side=tk.LEFT, padx=(2, 12))
-        ttk.Label(top, text="Screen type:").pack(side=tk.LEFT)
+        ttk.Label(top, text="Screen type:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._screen_type_var = tk.StringVar(value=SCREEN_TYPE_CHOICES[0][0])
         ttk.Combobox(top, textvariable=self._screen_type_var, values=[n for n, _ in SCREEN_TYPE_CHOICES], width=14,
                      state="readonly").pack(side=tk.LEFT, padx=(2, 12))
@@ -92,7 +92,7 @@ class ConfigTab(ttk.Frame):
         )
 
         self._status_var = tk.StringVar()
-        ttk.Label(self, textvariable=self._status_var, foreground="#555").pack(side=tk.TOP, anchor="w", pady=(10, 0))
+        ttk.Label(self, textvariable=self._status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(10, 0))
 
     def _apply_machine(self):
         model = dict(MODEL_CHOICES)[self._model_var.get()]

@@ -5,10 +5,16 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
+from amspirit_debug_gui import theme
 from amspirit_debug_gui.util import KMAT_LABELS, VK_TABLE, ThreadSafeMirror
 
-_IDLE_BG = "#e8e8e8"
-_PRESSED_BG = "#2e7d32"
+# A matrix cell is a two-state indicator, so it gets the badge colours the
+# HTML uses for run/pause rather than a shade of the surface: the whole point
+# of the grid is that a pressed key is spottable without reading it.
+_IDLE_BG = theme.C["field_bg"]
+_IDLE_FG = theme.C["muted"]
+_PRESSED_BG = theme.C["run_bg"]
+_PRESSED_FG = theme.C["run_fg"]
 
 
 class KeyboardTab(ttk.Frame):
@@ -58,23 +64,24 @@ class KeyboardTab(ttk.Frame):
         grid = ttk.Frame(matrix_frame)
         grid.pack(side=tk.TOP, pady=(8, 0))
         for c in range(8):
-            ttk.Label(grid, text=f"bit {c}", font=("Courier New", 8)).grid(row=0, column=c + 1)
-        ttk.Label(grid, text="hex", font=("Courier New", 8)).grid(row=0, column=9)
+            ttk.Label(grid, text=f"bit {c}", font=theme.mono(8)).grid(row=0, column=c + 1)
+        ttk.Label(grid, text="hex", font=theme.mono(8)).grid(row=0, column=9)
         for r in range(10):
-            ttk.Label(grid, text=f"Lg{r}", font=("Courier New", 8)).grid(row=r + 1, column=0, sticky="e", padx=(0, 4))
+            ttk.Label(grid, text=f"Lg{r}", font=theme.mono(8)).grid(row=r + 1, column=0, sticky="e", padx=(0, 4))
             for c in range(8):
                 lbl = tk.Label(
-                    grid, text=KMAT_LABELS[r][c], width=6, font=("Courier New", 8),
-                    background=_IDLE_BG, relief=tk.RIDGE, borderwidth=1,
+                    grid, text=KMAT_LABELS[r][c], width=6, font=theme.mono(8),
+                    background=_IDLE_BG, foreground=_IDLE_FG,
+                    relief=tk.SOLID, borderwidth=1,
                 )
                 lbl.grid(row=r + 1, column=c + 1, padx=1, pady=1)
                 self._cells[(r, c)] = lbl
-            hexlbl = ttk.Label(grid, text="00", font=("Courier New", 8))
+            hexlbl = ttk.Label(grid, text="00", font=theme.mono(8))
             hexlbl.grid(row=r + 1, column=9, padx=(4, 0))
             self._hex_labels[r] = hexlbl
 
         self._status_var = tk.StringVar()
-        ttk.Label(self, textvariable=self._status_var, foreground="#555").pack(side=tk.TOP, anchor="w", pady=(6, 0))
+        ttk.Label(self, textvariable=self._status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(6, 0))
 
     def _send_text(self):
         text = self._text_var.get()
@@ -117,6 +124,6 @@ class KeyboardTab(ttk.Frame):
                 cell = self._cells[(r, c)]
                 cell.configure(
                     background=_PRESSED_BG if pressed else _IDLE_BG,
-                    foreground="white" if pressed else "black",
+                    foreground=_PRESSED_FG if pressed else _IDLE_FG,
                 )
             self._hex_labels[r].configure(text=f"{byte:02X}")

@@ -12,6 +12,7 @@ import struct
 import tkinter as tk
 from tkinter import filedialog, ttk
 
+from amspirit_debug_gui import theme
 from amspirit_debug_gui.util import ThreadSafeMirror
 
 WINDOW_CHOICES = ["0.1", "0.5", "1", "5", "10"]
@@ -37,7 +38,7 @@ class AudioTab(ttk.Frame):
     def _build(self):
         top = ttk.Frame(self)
         top.pack(side=tk.TOP, fill=tk.X)
-        ttk.Label(top, text="Window (s):").pack(side=tk.LEFT)
+        ttk.Label(top, text="Window (s):", style="Muted.TLabel").pack(side=tk.LEFT)
         self._window_var = tk.StringVar(value="1")
         ttk.Combobox(top, textvariable=self._window_var, values=WINDOW_CHOICES, width=5, state="readonly").pack(
             side=tk.LEFT, padx=(2, 10)
@@ -49,12 +50,14 @@ class AudioTab(ttk.Frame):
         )
         ttk.Button(top, text="Save WAV…", command=self._save_wav).pack(side=tk.LEFT, padx=(8, 0))
 
-        self._canvas = tk.Canvas(self, height=180, background="#0a0a0a", highlightthickness=1)
+        self._canvas = tk.Canvas(self, height=180, background=theme.C["plot_bg"],
+                                 highlightthickness=1,
+                                 highlightbackground=theme.C["border"])
         self._canvas.pack(side=tk.TOP, fill=tk.X, pady=(8, 0))
 
         device_row = ttk.Frame(self)
         device_row.pack(side=tk.TOP, fill=tk.X, pady=(10, 0))
-        ttk.Label(device_row, text="Output device:").pack(side=tk.LEFT)
+        ttk.Label(device_row, text="Output device:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._device_var = tk.StringVar()
         self._device_combo = ttk.Combobox(device_row, textvariable=self._device_var, state="readonly", width=32)
         self._device_combo.pack(side=tk.LEFT, padx=(4, 6))
@@ -62,7 +65,7 @@ class AudioTab(ttk.Frame):
 
         vol_row = ttk.Frame(self)
         vol_row.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
-        ttk.Label(vol_row, text="Volume:").pack(side=tk.LEFT)
+        ttk.Label(vol_row, text="Volume:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._volume_var = tk.IntVar(value=100)
         ttk.Scale(vol_row, from_=0, to=100, orient=tk.HORIZONTAL, variable=self._volume_var,
                   command=lambda _v: self._on_volume_change()).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 6))
@@ -70,7 +73,7 @@ class AudioTab(ttk.Frame):
         self._volume_label.pack(side=tk.LEFT)
 
         self._status_var = tk.StringVar()
-        ttk.Label(self, textvariable=self._status_var, foreground="#555").pack(side=tk.TOP, anchor="w", pady=(8, 0))
+        ttk.Label(self, textvariable=self._status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(8, 0))
 
     def _on_frame(self, _data):
         if self._live.value and self.app.is_tab_active("audio")():
@@ -106,8 +109,8 @@ class AudioTab(ttk.Frame):
             y = mid - samples[i] * scale
             points.extend((x, y))
         if len(points) >= 4:
-            self._canvas.create_line(*points, fill="#6fdc6f")
-        self._canvas.create_line(0, mid, w, mid, fill="#333")
+            self._canvas.create_line(*points, fill=theme.C["plot_trace"])
+        self._canvas.create_line(0, mid, w, mid, fill=theme.C["plot_grid"])
         self._status_var.set(f"{result.get('hz', '?')} Hz, {result.get('filled_seconds', '?')}s buffered")
 
     def _on_devices(self, result, error):
