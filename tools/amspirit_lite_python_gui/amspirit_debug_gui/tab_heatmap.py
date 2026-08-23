@@ -18,7 +18,6 @@ import tkinter as tk
 from tkinter import ttk
 
 from amspirit_debug_gui import theme
-from amspirit_debug_gui.util import ThreadSafeMirror
 
 # Identity colours, not theme colours: each one says "this dot is PC" and is
 # the same hue amspirit-lite.html uses. Deliberately not in theme.py, which
@@ -70,12 +69,12 @@ class HeatmapTab(ttk.Frame):
         self._prev_bank: int | None = None
         self._overlay_vars: dict[str, tk.BooleanVar] = {}
         self._build()
-        self._live = ThreadSafeMirror(self._live_var, False)
-        self._bank = ThreadSafeMirror(self._bank_var, self._bank_var.get())
-        # Ticking used to run on its own 1s timer; now it's paced by the SSE
-        # "frame" push instead, same as amspirit-lite.html's hmTick() call
-        # from its frame listener.
-        app.on_sse("frame", self._on_frame)
+        # Regime C, no pause tick: the heatmap measures *change over time*, so
+        # a paused machine has nothing to add to it. By far the heaviest Panel
+        # in the GUI -- each tick re-dumps the bank's full 64 KB to diff it --
+        # but the in-flight guard means it self-paces to whatever the link can
+        # actually carry rather than queueing work it can never drain.
+        self._panel = app.register_panel(self, "C", self._tick_once)
 
     def _build(self):
         top = ttk.Frame(self)
@@ -93,12 +92,7 @@ class HeatmapTab(ttk.Frame):
         self._decay_var = tk.StringVar(value="0.92")
         ttk.Combobox(top, textvariable=self._decay_var, values=["0.80", "0.92", "0.98", "1.00"], width=6,
                      state="readonly").pack(side=tk.LEFT, padx=(2, 10))
-        self._live_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(top, text="Live", variable=self._live_var).pack(side=tk.LEFT)
-        ttk.Button(top, text="Tick once", command=self._tick_once).pack(
-            side=tk.LEFT, padx=(8, 0)
-        )
-        ttk.Button(top, text="Clear", command=self._clear).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(top, text="Clear", command=self._clear).pack(side=tk.LEFT)
 
         overlay_row = ttk.Frame(self)
         overlay_row.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
@@ -137,15 +131,13 @@ class HeatmapTab(ttk.Frame):
         self._prev = None
         self._render()
 
-    def _on_frame(self, _data):
-        if self._live.value and self.app.is_tab_active("heatmap")():
-            self._tick_once()
-
     def _tick_once(self):
-        self.app.run_async(self._tick_fetch, self._tick_apply)
+        # Bank is read here, on the Tk thread, and passed down: _tick_fetch
+        # runs on a worker where touching a Tk variable is not safe.
+        bank = self._bank_var.get()
+        self._panel.run(lambda: self._tick_fetch(bank), self._tick_apply)
 
-    def _tick_fetch(self):
-        bank = self._bank.value
+    def _tick_fetch(self, bank):
         ram = bytes.fromhex(self.app.client.get(f"/api/ram?addr=0&len=65536&bank={bank}")["hex"])
         try:
             z80 = self.app.client.get("/api/z80")

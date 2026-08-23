@@ -1,10 +1,17 @@
-"""Tk root window: connection bar, tab notebook, and the background poller.
+"""Tk root window: connection bar, tab notebook, and the refresh machinery.
 
-Network calls never run on the Tk main thread. PollingManager's worker
-thread does the HTTP request and drops the result in a queue; the main
-thread only drains that queue (via `root.after`) and touches widgets --
-this is what keeps the GUI responsive if the emulator stalls or a request
-times out, instead of freezing the whole window for up to `timeout` seconds.
+Every view in the GUI registers as a `Panel` declaring how it gets its data --
+Regime A (on wake), B (polled while visible) or C (pushed). See CONTEXT.md for
+the vocabulary; this module is where those regimes are actually dispatched.
+Three sources drive them: the SSE "frame" push for Regime C, a sampling tick
+that notices a Panel becoming Visible, and the Pause Tick that keeps Regime C
+alive while the emulator is paused and emitting nothing.
+
+Network calls never run on the Tk main thread. Every fetch goes out on a
+worker (`run_async`, or PollingManager's thread for the connection ping) and
+comes back to the main thread to touch widgets -- this is what keeps the GUI
+responsive if the emulator stalls or a request times out, instead of freezing
+the whole window for up to `timeout` seconds.
 """
 
 from __future__ import annotations
@@ -34,19 +41,24 @@ CRTC_NAMES = {0: "Type 0", 1: "Type 1", 2: "Type 2", 3: "Type 3", 4: "Type 4"}
 
 
 class _PollTask:
-    __slots__ = ("key", "interval", "fetch", "callback", "active", "next_due")
+    __slots__ = ("key", "interval", "fetch", "callback", "next_due")
 
-    def __init__(self, key, interval, fetch, callback, active):
+    def __init__(self, key, interval, fetch, callback):
         self.key = key
         self.interval = interval
         self.fetch = fetch
         self.callback = callback
-        self.active = active
         self.next_due = 0.0
 
 
 class PollingManager:
-    """One background thread services every registered periodic HTTP fetch."""
+    """One background thread services every registered periodic HTTP fetch.
+
+    Down to a single task since Panels took over per-view refreshing: the 1s
+    connection-health ping, which must keep running whether or not anything is
+    visible. Kept as-is rather than inlined because it is the one fetch that
+    must never touch the Tk thread even to decide whether to run.
+    """
 
     def __init__(self, root: tk.Tk):
         self._root = root
@@ -58,9 +70,9 @@ class PollingManager:
         self._thread.start()
         self._root.after(50, self._drain)
 
-    def register(self, key, interval_ms, fetch, callback, active=None):
+    def register(self, key, interval_ms, fetch, callback):
         with self._lock:
-            self._tasks[key] = _PollTask(key, interval_ms / 1000.0, fetch, callback, active or (lambda: True))
+            self._tasks[key] = _PollTask(key, interval_ms / 1000.0, fetch, callback)
 
     def unregister(self, key):
         with self._lock:
@@ -80,7 +92,7 @@ class PollingManager:
         while not self._stop.is_set():
             now = time.monotonic()
             with self._lock:
-                due = [t for t in self._tasks.values() if now >= t.next_due and t.active()]
+                due = [t for t in self._tasks.values() if now >= t.next_due]
             for t in due:
                 try:
                     result = t.fetch()
@@ -104,7 +116,78 @@ class PollingManager:
             self._root.after(50, self._drain)
 
 
+class Panel:
+    """One view's registration with the refresh machinery. See CONTEXT.md.
+
+    A Panel is identified by its widget, not by a tab name: `winfo_viewable()`
+    is true only when the widget *and every ancestor* are mapped, and ttk
+    unmaps the frames of unselected tabs. That makes Visible exact through
+    arbitrarily nested notebooks -- the CPU tab is two levels deep in places --
+    with no path bookkeeping to keep in sync with the widget tree.
+
+    `visible` is a plain attribute refreshed once per sampling tick rather than
+    a live query, so a Panel's visibility can be read from anywhere without
+    caring which thread is asking -- every Tk call, `winfo_viewable` included,
+    must happen on the main thread.
+    """
+
+    __slots__ = ("regime", "widget", "refresh", "interval", "pause_tick", "gate",
+                 "visible", "busy", "next_due", "_app")
+
+    def __init__(self, app, widget, regime, refresh, interval, pause_tick, gate):
+        self._app = app
+        self.widget = widget
+        self.regime = regime
+        self.refresh = refresh
+        self.interval = (interval or 0) / 1000.0
+        self.pause_tick = pause_tick
+        self.gate = gate
+        self.visible = False
+        self.busy = False
+        self.next_due = 0.0
+
+    # -- in-flight guard ------------------------------------------------------
+    #
+    # A Panel refreshes at most one request-chain at a time: ticks arriving
+    # while one is in flight are dropped, not queued. This is what lets an
+    # expensive Panel (BASIC variables issues four chained requests) sit on
+    # the same ~5Hz push as a cheap one without piling up work it can never
+    # drain -- each Panel self-paces to whatever it can actually achieve.
+
+    def begin(self) -> bool:
+        """Claim the Panel for a refresh. False if one is already running."""
+        if self.busy:
+            return False
+        self.busy = True
+        return True
+
+    def end(self):
+        self.busy = False
+
+    def run(self, fetch, on_done):
+        """The single-request case: begin(), fetch off-thread, end() after.
+
+        Multi-request chains call begin()/end() themselves around
+        `app.run_async`, so the guard spans the whole chain.
+        """
+        if not self.begin():
+            return
+        def done(result, error):
+            self.end()
+            on_done(result, error)
+        self._app.run_async(fetch, done)
+
+
 class DebugGuiApp(tk.Tk):
+    # Visibility is sampled rather than pushed: ttk emits <<NotebookTabChanged>>
+    # per notebook, but not for a tab that becomes visible because an *ancestor*
+    # was selected. Sampling `winfo_viewable` catches every path uniformly, and
+    # costs one cheap local Tk call per Panel.
+    _VISIBILITY_TICK_MS = 100
+    # The Pause Tick: while paused the emulator emits no "frame", but its state
+    # still moves under single-step, timelapse and direct RAM writes.
+    _PAUSE_TICK_MS = 500
+
     def __init__(self, host: str = "127.0.0.1", port: int = 8765):
         super().__init__()
         self.title("AMSpiriT Lite — Debug GUI")
@@ -117,12 +200,11 @@ class DebugGuiApp(tk.Tk):
 
         self.client = AmspiritClient(host=host, port=port)
         self.poller = PollingManager(self)
-        self._tab_keys: list[str] = []
-        self.active_tab_key = ""
+        self._panels: list[Panel] = []
 
         # SSE setup happens before the notebook is built: tabs register their
-        # own on_sse() listeners (CPU registers/screen, audio waveform, heatmap
-        # ticks) from their __init__, which runs during _build_notebook().
+        # Panels (and any extra on_sse() listeners) from their __init__, which
+        # runs during _build_notebook().
         self._sse_listeners: dict[str, list] = {}
         self.sse = SseClient(lambda: self.client.base_url)
 
@@ -132,18 +214,105 @@ class DebugGuiApp(tk.Tk):
 
         # "ping" stays a slow (1s) fallback poll purely for connection health --
         # same role it plays in amspirit-lite.html, which keeps its own
-        # setInterval(refresh, 1000) running alongside SSE. Everything that
-        # used to be its own fast poll timer (CPU registers/screen, audio
-        # waveform, heatmap ticks) is now paced by the SSE "frame" push
-        # instead -- see sse_client.py and each tab's app.on_sse("frame", ...).
+        # setInterval(refresh, 1000) running alongside SSE. It is deliberately
+        # not a Panel: it must run whether or not anything is visible, since it
+        # is what tells the user they are disconnected.
         self.poller.register("ping", 1000, lambda: self.client.get("/api/ping"), self._on_ping)
         self.poller.trigger("ping")
 
         self.on_sse("pause", self._on_sse_pause)
-        self.on_sse("__open__", lambda _data: self.poller.trigger("ping"))
+        self.on_sse("frame", self._on_sse_frame)
+        # Invalidation. "reset" is obvious -- the whole machine changed. The
+        # reconnect case is subtler: /api/events drops the oldest events once a
+        # client's queue passes 32, so a stream that went away and came back may
+        # have swallowed the very events a Regime C Panel needed. Anything on
+        # screen after a gap is of unknown age, so it is all re-read.
+        self.on_sse("reset", lambda _data: self.invalidate())
+        self.on_sse("__open__", self._on_sse_open)
         self._drain_sse()
 
+        self._tick_panels()
+        self._tick_pause()
+
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    # -- Panels ---------------------------------------------------------------
+
+    def register_panel(self, widget, regime: str, refresh, *, interval_ms: int | None = None,
+                       pause_tick: bool = False, gate=None) -> Panel:
+        """Declare how one view gets its data. Regimes are defined in CONTEXT.md.
+
+        `refresh` runs on the Tk thread and should issue its request through
+        the returned Panel's `run()` so the in-flight guard applies.
+
+        `interval_ms` applies to Regime B only. `pause_tick` opts a Regime C
+        Panel into refreshing while the emulator is paused -- appropriate for
+        what a user action can still change (registers, RAM), pointless for
+        what genuinely freezes (the screen, the audio waveform). `gate` is an
+        extra predicate, read on the Tk thread, for the two Panels that keep a
+        user-facing "Live refresh" switch.
+        """
+        assert regime in ("A", "B", "C"), regime
+        assert (regime == "B") == (interval_ms is not None), \
+            "interval_ms belongs to Regime B and only to Regime B"
+        panel = Panel(self, widget, regime, refresh, interval_ms, pause_tick, gate)
+        self._panels.append(panel)
+        return panel
+
+    def _fire(self, panel: Panel, forced: bool = False):
+        if not panel.visible or panel.busy:
+            return
+        # A gate ("Live refresh" unticked) means "stop paying for this
+        # continuously", not "never show me anything". Waking a Panel and
+        # invalidating one are both discrete events after which the view is
+        # known to be absent or wrong, so they read once regardless -- opening
+        # the Screen sub-tab with Live off should still show you the screen.
+        if not forced and panel.gate is not None and not panel.gate():
+            return
+        panel.next_due = time.monotonic() + panel.interval
+        try:
+            panel.refresh()
+        except Exception:
+            pass  # a buggy tab refresh must not kill the dispatcher
+
+    def _tick_panels(self):
+        now = time.monotonic()
+        for panel in self._panels:
+            try:
+                visible = bool(panel.widget.winfo_viewable())
+            except tk.TclError:
+                visible = False  # widget destroyed during shutdown
+            woke = visible and not panel.visible
+            panel.visible = visible
+            # A Panel of any regime reads once on waking: Regime A because that
+            # is its whole contract, B and C because otherwise a freshly opened
+            # view shows stale or empty content until its next tick.
+            if woke:
+                self._fire(panel, forced=True)
+            elif visible and panel.regime == "B" and now >= panel.next_due:
+                self._fire(panel)
+        self.after(self._VISIBILITY_TICK_MS, self._tick_panels)
+
+    def _tick_pause(self):
+        if self._paused:
+            for panel in self._panels:
+                if panel.regime == "C" and panel.pause_tick:
+                    self._fire(panel)
+        self.after(self._PAUSE_TICK_MS, self._tick_pause)
+
+    def invalidate(self):
+        """Re-read every visible Panel: what is on screen can no longer be trusted."""
+        for panel in self._panels:
+            self._fire(panel, forced=True)
+
+    def _on_sse_frame(self, _data):
+        for panel in self._panels:
+            if panel.regime == "C":
+                self._fire(panel)
+
+    def _on_sse_open(self, _data):
+        self.poller.trigger("ping")
+        self.invalidate()
 
     # -- SSE (Server-Sent Events) ---------------------------------------------
 
@@ -171,9 +340,6 @@ class DebugGuiApp(tk.Tk):
         self._set_paused(bool(data.get("paused")))
 
     # -- shared helpers used by tab modules ----------------------------------
-
-    def is_tab_active(self, key: str):
-        return lambda: self.active_tab_key == key
 
     def set_status(self, message: str, error: bool = False):
         self._status_var.set(message)
@@ -347,27 +513,19 @@ class DebugGuiApp(tk.Tk):
         self.notebook.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=6, pady=(0, 6))
 
         tabs = [
-            ("kbd", "Keyboard", KeyboardTab),
-            ("cpu", "CPU / Debug", CpuTab),
-            ("basic", "BASIC", BasicTab),
-            ("audio", "Audio", AudioTab),
-            ("heatmap", "Heat Map", HeatmapTab),
-            ("poke", "Poke", PokeTab),
-            ("script", "Script", ScriptTab),
-            ("config", "Config", ConfigTab),
-            ("disk", "Disk", DiskTab),
-            ("settings", "Settings", SettingsTab),
+            ("Keyboard", KeyboardTab),
+            ("CPU / Debug", CpuTab),
+            ("BASIC", BasicTab),
+            ("Audio", AudioTab),
+            ("Heat Map", HeatmapTab),
+            ("Poke", PokeTab),
+            ("Script", ScriptTab),
+            ("Config", ConfigTab),
+            ("Disk", DiskTab),
+            ("Settings", SettingsTab),
         ]
-        for key, label, cls in tabs:
-            frame = cls(self.notebook, self)
-            self.notebook.add(frame, text=label)
-            self._tab_keys.append(key)
-        self.active_tab_key = self._tab_keys[0]
-        self.notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
-
-    def _on_tab_changed(self, _event=None):
-        idx = self.notebook.index(self.notebook.select())
-        self.active_tab_key = self._tab_keys[idx]
+        for label, cls in tabs:
+            self.notebook.add(cls(self.notebook, self), text=label)
 
     # -- status bar -----------------------------------------------------------
 

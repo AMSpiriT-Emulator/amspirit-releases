@@ -13,10 +13,10 @@ class ScriptTab(ttk.Frame):
         super().__init__(parent, padding=8)
         self.app = app
         self._build()
-        app.poller.register(
-            "script_state", 1000, lambda: app.client.get("/api/script"), self._on_state,
-            active=app.is_tab_active("script"),
-        )
+        # Regime C: a script's running/stopped state changes when the script
+        # itself ends, which nothing announces -- but "frame" arrives while it
+        # runs, and while paused a script cannot advance anyway.
+        self._state_panel = app.register_panel(self, "C", self._refresh_state)
 
     def _build(self):
         top = ttk.Frame(self)
@@ -35,6 +35,9 @@ class ScriptTab(ttk.Frame):
         self._state_var = tk.StringVar(value="(state unknown)")
         ttk.Label(self, textvariable=self._state_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(6, 0))
 
+    def _refresh_state(self):
+        self._state_panel.run(lambda: self.app.client.get("/api/script"), self._on_state)
+
     def _run(self):
         source = self._editor.get("1.0", tk.END)
         lang = self._lang_var.get()
@@ -44,7 +47,7 @@ class ScriptTab(ttk.Frame):
             if error is not None:
                 self._state_var.set(f"launch failed: {self.app.describe_error(error)}")
             else:
-                self.app.poller.trigger("script_state")
+                self._refresh_state()
 
         self.app.run_async(lambda: self.app.client.post_text(path, source), done)
 
@@ -53,7 +56,7 @@ class ScriptTab(ttk.Frame):
             if error is not None:
                 self._state_var.set(f"stop failed: {self.app.describe_error(error)}")
             else:
-                self.app.poller.trigger("script_state")
+                self._refresh_state()
 
         self.app.run_async(lambda: self.app.client.delete("/api/script"), done)
 

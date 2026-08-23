@@ -13,8 +13,16 @@ import tkinter as tk
 from tkinter import ttk
 
 from amspirit_debug_gui import theme
+from amspirit_debug_gui.flash import DecayingFlash
+from amspirit_debug_gui.util import parse_addr, parse_hex_bytes
 
-from amspirit_debug_gui.util import ThreadSafeMirror, parse_addr, parse_hex_bytes
+# Column geometry of one dump row, as laid out by _dump_line(). Hard-coded
+# rather than derived because _patch_dump() addresses individual characters by
+# (line, column) to rewrite a single byte in place -- the alternative, redrawing
+# the row, would throw away the user's scroll position five times a second.
+_COL_HEX = 8            # "0x0000" + two spaces
+_COL_ASCII = _COL_HEX + 47 + 2   # 16 bytes as "xx " (47 chars) + two spaces
+_BYTES_PER_ROW = 16
 
 Z80_FIELDS = [
     ["PC", "SP", "IX", "IY", "I", "R"],
@@ -32,28 +40,55 @@ class CpuTab(ttk.Frame):
         self._memmap_region_vars: dict[int, tk.StringVar] = {}
         self._build()
 
-        self._live_screen = ThreadSafeMirror(self._live_screen_var, False)
+        # Six Panels, one per sub-view. Each refreshes only while it is the
+        # visible one -- opening "CPU / Debug" no longer costs nine requests
+        # for the eight sub-views nobody is looking at.
+        #
+        # `pause_tick` on registers and memory: single-stepping and poking are
+        # exactly the things done while paused, and they must be seen to work.
+        # The screen and the circuits genuinely stop when the emulator does.
+        self._reg_panel = app.register_panel(
+            self._reg_frame, "C", self._refresh_z80, pause_tick=True)
+        self._mem_panel = app.register_panel(
+            self._mem_frame, "C", self._refresh_dump, pause_tick=True)
+        self._memmap_panel = app.register_panel(
+            self._memmap_frame, "C", self._refresh_memmap)
+        self._history_panel = app.register_panel(
+            self._history_frame, "C", self._refresh_history)
+        # One Panel per circuit page, not one for the group: they live in a
+        # nested notebook, so only the selected one is Visible.
+        self._circuit_panels = {
+            key: app.register_panel(page, "C", lambda k=key: self._refresh_circuit(k))
+            for key, page in self._circuit_pages.items()
+        }
+        self._screen_panel = app.register_panel(
+            self._screen_frame, "C", self._refresh_screenshot,
+            gate=self._live_screen_var.get)
 
-        # Registers/screen used to poll on their own 500ms timers; now they're
-        # paced by the emulator's own SSE "frame" push (~5Hz) instead, same as
-        # amspirit-lite.html's refreshCPU()/refreshScreen() calls from its
-        # frame listener. "z80_bp" adds an immediate refresh on breakpoint hit
-        # rather than waiting for the next frame tick.
-        app.on_sse("frame", self._on_frame)
+        # A breakpoint hit is the one thing that must not wait for the next
+        # ~5Hz frame tick -- and it arrives precisely when frames stop.
         app.on_sse("z80_bp", self._on_z80_bp)
-        self._refresh_z80()
 
     # -- layout ----------------------------------------------------------------
 
     def _build(self):
         sub = ttk.Notebook(self)
         sub.pack(fill=tk.BOTH, expand=True)
-        sub.add(self._build_registers(sub), text="Registers")
-        sub.add(self._build_memory(sub), text="Memory")
-        sub.add(self._build_memmap(sub), text="Memory Map")
-        sub.add(self._build_breakpoints(sub), text="Breakpoints / History")
-        sub.add(self._build_circuits(sub), text="Circuits")
-        sub.add(self._build_screen(sub), text="Screen")
+        # Each sub-frame is kept: it is the widget whose visibility gates its
+        # Panel, so the refresh machinery can ask Tk directly rather than
+        # tracking which tab is selected.
+        self._reg_frame = self._build_registers(sub)
+        self._mem_frame = self._build_memory(sub)
+        self._memmap_frame = self._build_memmap(sub)
+        self._history_frame = self._build_breakpoints(sub)
+        self._circuits_frame = self._build_circuits(sub)
+        self._screen_frame = self._build_screen(sub)
+        sub.add(self._reg_frame, text="Registers")
+        sub.add(self._mem_frame, text="Memory")
+        sub.add(self._memmap_frame, text="Memory Map")
+        sub.add(self._history_frame, text="Breakpoints / History")
+        sub.add(self._circuits_frame, text="Circuits")
+        sub.add(self._screen_frame, text="Screen")
 
     def _build_registers(self, parent):
         frame = ttk.Frame(parent, padding=8)
@@ -85,14 +120,19 @@ class CpuTab(ttk.Frame):
         row.pack(side=tk.TOP, fill=tk.X)
         ttk.Label(row, text="Address:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._mem_addr_var = tk.StringVar(value="0x0000")
-        ttk.Entry(row, textvariable=self._mem_addr_var, width=10).pack(side=tk.LEFT, padx=(2, 8))
+        addr_entry = ttk.Entry(row, textvariable=self._mem_addr_var, width=10)
+        addr_entry.pack(side=tk.LEFT, padx=(2, 8))
         ttk.Label(row, text="Length:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._mem_len_var = tk.StringVar(value="256")
         ttk.Entry(row, textvariable=self._mem_len_var, width=8).pack(side=tk.LEFT, padx=(2, 8))
         ttk.Label(row, text="Bank:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._mem_bank_var = tk.StringVar(value="0")
         ttk.Entry(row, textvariable=self._mem_bank_var, width=4).pack(side=tk.LEFT, padx=(2, 8))
-        ttk.Button(row, text="Read", command=self._read_ram).pack(side=tk.LEFT)
+        # No longer "Read": the dump reads itself. This *moves the window*,
+        # which is why the entries are only consulted when it is pressed --
+        # sampling them every tick would fire requests at half-typed addresses.
+        ttk.Button(row, text="Go", command=self._go_to_address).pack(side=tk.LEFT)
+        addr_entry.bind("<Return>", lambda _e: self._go_to_address())
 
         search_row = ttk.Frame(frame)
         search_row.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
@@ -104,8 +144,14 @@ class CpuTab(ttk.Frame):
         self._dump_text = tk.Text(frame, height=24, font=theme.mono(10), wrap="none")
         self._dump_text.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(8, 0))
         self._dump_text.configure(state=tk.DISABLED)
+        self._dump_flash = DecayingFlash(self._dump_text, theme.C["flash_accent"],
+                                         theme.C["fg"])
         self._dump_bytes = b""
+        # The window the live refresh reads, committed by "Go" -- distinct from
+        # what the entries currently contain, which is whatever is being typed.
         self._dump_base_addr = 0
+        self._dump_len = 256
+        self._dump_bank = 0
 
         self._mem_status_var = tk.StringVar()
         ttk.Label(frame, textvariable=self._mem_status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(4, 0))
@@ -116,7 +162,6 @@ class CpuTab(ttk.Frame):
         row = ttk.Frame(frame)
         row.pack(side=tk.TOP, fill=tk.X)
         ttk.Label(row, text="ROM/RAM Mapping:", style="Muted.TLabel").pack(side=tk.LEFT)
-        ttk.Button(row, text="Refresh", command=self._refresh_memmap).pack(side=tk.LEFT, padx=(10, 0))
 
         regions_frame = ttk.LabelFrame(frame, text="16 KB Regions", padding=8)
         regions_frame.pack(side=tk.TOP, fill=tk.X, pady=(8, 0))
@@ -166,9 +211,8 @@ class CpuTab(ttk.Frame):
                         ext = " (ext)" if region.get("ext") else ""
                         text = f"RAM bank {region.get('ram_bank', '?')}{ext}"
                     self._memmap_region_vars[addr].set(text)
-            self._memmap_status_var.set("memmap refreshed")
 
-        self.app.run_async(lambda: self.app.client.get("/api/memmap"), done)
+        self._memmap_panel.run(lambda: self.app.client.get("/api/memmap"), done)
 
     def _build_breakpoints(self, parent):
         frame = ttk.Frame(parent, padding=8)
@@ -189,7 +233,6 @@ class CpuTab(ttk.Frame):
         self._history_text = tk.Text(frame, height=14, font=theme.mono(10))
         self._history_text.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         self._history_text.configure(state=tk.DISABLED)
-        ttk.Button(frame, text="Refresh history", command=self._refresh_history).pack(side=tk.TOP, anchor="w", pady=(6, 0))
 
         self._bp_status_var = tk.StringVar()
         ttk.Label(frame, textvariable=self._bp_status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(4, 0))
@@ -200,16 +243,15 @@ class CpuTab(ttk.Frame):
         sub = ttk.Notebook(frame)
         sub.pack(fill=tk.BOTH, expand=True)
         self._circuit_vars: dict[str, tk.StringVar] = {}
+        self._circuit_pages: dict[str, ttk.Frame] = {}
         for key, label in (("ga", "Gate Array"), ("crtc", "CRTC"), ("fdc", "FDC"), ("psg", "PSG")):
             page = ttk.Frame(sub, padding=8)
             sub.add(page, text=label)
             var = tk.StringVar(value="(not read yet)")
             self._circuit_vars[key] = var
+            self._circuit_pages[key] = page
             ttk.Label(page, textvariable=var, justify=tk.LEFT, font=theme.mono(10)).pack(
                 side=tk.TOP, anchor="nw"
-            )
-            ttk.Button(page, text="Refresh", command=lambda k=key: self._refresh_circuit(k)).pack(
-                side=tk.TOP, anchor="w", pady=(8, 0)
             )
         return frame
 
@@ -241,23 +283,16 @@ class CpuTab(ttk.Frame):
 
     # -- registers ---------------------------------------------------------
 
-    def _on_frame(self, _data):
-        """SSE "frame" (~5Hz): pace registers/screen refresh while this tab is open."""
-        if not self.app.is_tab_active("cpu")():
-            return
-        self._refresh_z80()
-        if self._live_screen.value:
-            self._refresh_screenshot()
-
     def _on_z80_bp(self, data):
-        """SSE "z80_bp": refresh immediately on breakpoint hit, don't wait for the next frame."""
-        pc = data.get("pc", "????")
-        self._reg_status_var.set(f"Z80 breakpoint @ {pc}")
-        self._refresh_z80()
-        self._refresh_screenshot()
+        """SSE "z80_bp": a breakpoint hit both stops the frames and is the
+        moment the state matters most, so it invalidates everything at once
+        rather than refreshing this tab's two panels and leaving the rest of
+        the window showing pre-breakpoint values."""
+        self._reg_status_var.set(f"Z80 breakpoint @ {data.get('pc', '????')}")
+        self.app.invalidate()
 
     def _refresh_z80(self):
-        self.app.run_async(lambda: self.app.client.get("/api/z80"), self._on_z80)
+        self._reg_panel.run(lambda: self.app.client.get("/api/z80"), self._on_z80)
 
     def _on_z80(self, result, error):
         if error is not None:
@@ -281,45 +316,105 @@ class CpuTab(ttk.Frame):
                 self._reg_status_var.set(f"{verb} failed: {self.app.describe_error(error)}")
             else:
                 self._reg_status_var.set(verb)
-                self._refresh_z80()
+                # A step moves the whole machine, not just the registers: the
+                # dump, the memory map and the history are all stale now, and
+                # no "frame" event will say so while paused.
+                self.app.invalidate()
         return done
 
     # -- memory --------------------------------------------------------------
 
-    def _read_ram(self):
+    def _go_to_address(self):
+        """Commit the entries as the window the live dump reads from."""
         try:
-            addr = parse_addr(self._mem_addr_var.get())
-            length = int(self._mem_len_var.get())
-            bank = int(self._mem_bank_var.get() or 0)
+            self._dump_base_addr = parse_addr(self._mem_addr_var.get())
+            self._dump_len = int(self._mem_len_var.get())
+            self._dump_bank = int(self._mem_bank_var.get() or 0)
         except ValueError as e:
             self._mem_status_var.set(f"bad input: {e}")
             return
+        self._dump_bytes = b""  # force a relayout at the new address
+        self._refresh_dump()
+
+    def _refresh_dump(self):
+        addr, length, bank = self._dump_base_addr, self._dump_len, self._dump_bank
 
         def done(result, error):
             if error is not None:
                 self._mem_status_var.set(f"read failed: {self.app.describe_error(error)}")
                 return
-            self._dump_bytes = bytes.fromhex(result["hex"])
-            self._dump_base_addr = addr
-            self._render_dump()
-            self._mem_status_var.set(f"read {len(self._dump_bytes)} byte(s) from {addr:#06x}")
+            self._apply_dump(bytes.fromhex(result["hex"]))
 
-        self.app.run_async(
+        self._mem_panel.run(
             lambda: self.app.client.get(f"/api/ram?addr={addr}&len={length}&bank={bank}"), done
         )
 
-    def _render_dump(self, highlight_offset: int = -1, highlight_len: int = 0):
-        lines = []
+    def _apply_dump(self, data: bytes):
+        """Show `data`, touching only the characters whose bytes actually moved.
+
+        Rewriting the whole Text would reset the scroll position and any
+        selection several times a second, which is the difference between a
+        live dump and an unusable one (see CONTEXT.md, and the "never
+        reconstruct" rule this Panel is the hardest case for).
+        """
+        if len(data) != len(self._dump_bytes):
+            self._dump_bytes = data
+            self._relayout_dump()
+            self._mem_status_var.set(
+                f"{len(data)} byte(s) from {self._dump_base_addr:#06x}"
+                f"{f' bank {self._dump_bank}' if self._dump_bank else ''}")
+            return
+
+        previous, self._dump_bytes = self._dump_bytes, data
+        changed = [i for i in range(len(data)) if data[i] != previous[i]]
+        if not changed:
+            return
+        # Patching is cheaper than redrawing only while the changes are sparse:
+        # each byte costs four Tk calls, so a window over screen RAM -- where
+        # nearly every byte moves every frame -- would cost more in tag
+        # bookkeeping than the redraw it was avoiding. Past half the window,
+        # redraw instead, and skip the flash: "everything changed" is not a
+        # useful thing to highlight.
+        if len(changed) * 2 > len(data):
+            self._relayout_dump(keep_scroll=True)
+            return
+        self._dump_text.configure(state=tk.NORMAL)
+        for offset in changed:
+            self._patch_byte(offset, data[offset])
+        self._dump_text.configure(state=tk.DISABLED)
+
+    def _patch_byte(self, offset: int, value: int):
+        line = offset // _BYTES_PER_ROW + 1
+        col = offset % _BYTES_PER_ROW
+        for start_col, text in ((_COL_HEX + col * 3, f"{value:02x}"),
+                                (_COL_ASCII + col, chr(value) if 32 <= value < 127 else ".")):
+            start = f"{line}.{start_col}"
+            end = f"{line}.{start_col + len(text)}"
+            self._dump_text.replace(start, end, text)
+            self._dump_flash.flash(start, end)
+
+    def _relayout_dump(self, keep_scroll: bool = False):
+        """Full redraw, for a new window or a wholesale change.
+
+        `keep_scroll` restores the viewport afterwards: a redraw driven by the
+        data changing must not move the user, whereas a redraw driven by "Go"
+        should land at the top of the new address.
+        """
         data = self._dump_bytes
-        for row_start in range(0, len(data), 16):
-            chunk = data[row_start:row_start + 16]
+        top = self._dump_text.yview()[0] if keep_scroll else None
+        lines = []
+        for row_start in range(0, len(data), _BYTES_PER_ROW):
+            chunk = data[row_start:row_start + _BYTES_PER_ROW]
             hex_part = " ".join(f"{b:02x}" for b in chunk)
             ascii_part = "".join(chr(b) if 32 <= b < 127 else "." for b in chunk)
             lines.append(f"{self._dump_base_addr + row_start:#06x}  {hex_part:<47}  {ascii_part}")
+        self._dump_flash.clear()
         self._dump_text.configure(state=tk.NORMAL)
         self._dump_text.delete("1.0", tk.END)
         self._dump_text.insert("1.0", "\n".join(lines))
         self._dump_text.configure(state=tk.DISABLED)
+        if top is not None:
+            self._dump_text.yview_moveto(top)
 
     def _search_dump(self):
         try:
@@ -370,7 +465,7 @@ class CpuTab(ttk.Frame):
             self._history_text.insert("1.0", "\n".join(lines))
             self._history_text.configure(state=tk.DISABLED)
 
-        self.app.run_async(lambda: self.app.client.get("/api/history"), done)
+        self._history_panel.run(lambda: self.app.client.get("/api/history"), done)
 
     # -- circuits --------------------------------------------------------------
 
@@ -381,7 +476,7 @@ class CpuTab(ttk.Frame):
                 return
             self._circuit_vars[key].set("\n".join(f"{k}: {v}" for k, v in result.items()))
 
-        self.app.run_async(lambda: self.app.client.get(f"/api/{key}"), done)
+        self._circuit_panels[key].run(lambda: self.app.client.get(f"/api/{key}"), done)
 
     # -- screen ------------------------------------------------------------------
 
@@ -389,7 +484,7 @@ class CpuTab(ttk.Frame):
         return self.app.client.get_raw("/api/screenshot?crop=1&full=1&live=0")
 
     def _refresh_screenshot(self):
-        self.app.run_async(self._fetch_screenshot, self._on_screenshot)
+        self._screen_panel.run(self._fetch_screenshot, self._on_screenshot)
 
     def _on_screenshot(self, result, error):
         if error is not None:

@@ -13,7 +13,6 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 
 from amspirit_debug_gui import theme
-from amspirit_debug_gui.util import ThreadSafeMirror
 
 WINDOW_CHOICES = ["0.1", "0.5", "1", "5", "10"]
 
@@ -23,17 +22,19 @@ class AudioTab(ttk.Frame):
         super().__init__(parent, padding=8)
         self.app = app
         self._build()
-        self._live = ThreadSafeMirror(self._live_var, False)
-        self._window = ThreadSafeMirror(self._window_var, self._window_var.get())
-        # Waveform used to poll its own 500ms timer; now it's paced by the SSE
-        # "frame" push (~5Hz), same as amspirit-lite.html's refreshAudio() call
-        # from its frame listener.
-        app.on_sse("frame", self._on_frame)
-        app.poller.register(
-            "audio_devices", 3000, lambda: app.client.get("/api/audio/devices"),
-            self._on_devices, active=app.is_tab_active("audio"),
-        )
-        app.poller.trigger("audio_devices")
+        # Two Panels with deliberately different regimes on the same tab.
+        # The waveform tracks execution, so Regime C -- but it keeps its "Live
+        # refresh" switch, one of only two in the GUI: decoding a second of
+        # S16LE samples and redrawing a polyline five times a second is real
+        # work, and the user must be able to stop paying for it. No pause tick:
+        # a paused CPC emits no sound.
+        self._wave_panel = app.register_panel(
+            self, "C", self._refresh_wave, gate=self._live_var.get)
+        # The device list is Regime A: it is populated by the frontend at
+        # startup and does not change while the emulator runs, so polling it
+        # every 3s was asking a question whose answer was already known.
+        self._devices_panel = app.register_panel(
+            self._device_row, "A", self._refresh_devices)
 
     def _build(self):
         top = ttk.Frame(self)
@@ -55,7 +56,7 @@ class AudioTab(ttk.Frame):
                                  highlightbackground=theme.C["border"])
         self._canvas.pack(side=tk.TOP, fill=tk.X, pady=(8, 0))
 
-        device_row = ttk.Frame(self)
+        device_row = self._device_row = ttk.Frame(self)
         device_row.pack(side=tk.TOP, fill=tk.X, pady=(10, 0))
         ttk.Label(device_row, text="Output device:", style="Muted.TLabel").pack(side=tk.LEFT)
         self._device_var = tk.StringVar()
@@ -75,14 +76,15 @@ class AudioTab(ttk.Frame):
         self._status_var = tk.StringVar()
         ttk.Label(self, textvariable=self._status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(8, 0))
 
-    def _on_frame(self, _data):
-        if self._live.value and self.app.is_tab_active("audio")():
-            self._refresh_wave()
-
     def _refresh_wave(self):
-        self.app.run_async(
-            lambda: self.app.client.get(f"/api/audio/record?seconds={self._window.value}"), self._on_wave
+        seconds = self._window_var.get()
+        self._wave_panel.run(
+            lambda: self.app.client.get(f"/api/audio/record?seconds={seconds}"), self._on_wave
         )
+
+    def _refresh_devices(self):
+        self._devices_panel.run(
+            lambda: self.app.client.get("/api/audio/devices"), self._on_devices)
 
     def _on_wave(self, result, error):
         self._canvas.delete("all")

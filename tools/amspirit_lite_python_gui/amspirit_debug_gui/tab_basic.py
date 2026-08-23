@@ -2,8 +2,8 @@
 
 Variable/array decoding walks the same in-RAM Locomotive BASIC layout the
 original page's JS decodes client-side (see util.parse_basic_vars /
-parse_basic_arrays); "Refresh variables" issues the same chain of requests
-the page does: GET /api/basic_state for the pointers, then three targeted
+parse_basic_arrays); the variables Panel issues the same chain of requests the
+page does: GET /api/basic_state for the pointers, then three targeted
 GET /api/ram reads (chain table, scalar zone, array zone).
 """
 
@@ -22,14 +22,32 @@ class BasicTab(ttk.Frame):
         self.app = app
         self._listing_data = None
         self._basic_state = {}
+        self._current_line = None
+        self._var_items: dict[str, str] = {}
+        self._array_items: dict[str, str] = {}
         self._build()
+
+        # Three Panels, and the split between the first two is the whole point
+        # of this tab. The listing *text* only changes when the program is
+        # edited; the *highlight* moves with every statement executed. Driving
+        # both from one refresh would force a choice between a frozen listing
+        # and one that redraws -- losing scroll and selection -- five times a
+        # second. So: text on wake, highlight on push.
+        self._listing_panel = app.register_panel(
+            self._listing_frame, "A", self._refresh_listing)
+        self._state_panel = app.register_panel(
+            self, "C", self._refresh_state, pause_tick=True)
+        # Four chained requests per refresh. It keeps up when the program is
+        # small and quietly runs slower when it is not, because the in-flight
+        # guard drops ticks rather than queueing them.
+        self._vars_panel = app.register_panel(
+            self._vars_frame, "C", self._refresh_vars, pause_tick=True)
 
     def _build(self):
         info = ttk.Frame(self)
         info.pack(side=tk.TOP, fill=tk.X)
         self._info_var = tk.StringVar(value="(no BASIC state read yet)")
         ttk.Label(info, textvariable=self._info_var, font=theme.mono(9)).pack(side=tk.LEFT)
-        ttk.Button(info, text="Refresh state", command=self._refresh_state).pack(side=tk.LEFT, padx=(10, 0))
 
         controls = ttk.Frame(self)
         controls.pack(side=tk.TOP, fill=tk.X, pady=(6, 0))
@@ -51,16 +69,17 @@ class BasicTab(ttk.Frame):
 
         sub = ttk.Notebook(self)
         sub.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(8, 0))
-        sub.add(self._build_listing(sub), text="Listing")
+        self._listing_frame = self._build_listing(sub)
+        self._vars_frame = self._build_variables(sub)
+        sub.add(self._listing_frame, text="Listing")
         sub.add(self._build_editor(sub), text="Editor")
-        sub.add(self._build_variables(sub), text="Variables")
+        sub.add(self._vars_frame, text="Variables")
 
         self._status_var = tk.StringVar()
         ttk.Label(self, textvariable=self._status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(6, 0))
 
     def _build_listing(self, parent):
         frame = ttk.Frame(parent, padding=6)
-        ttk.Button(frame, text="Refresh listing", command=self._refresh_listing).pack(side=tk.TOP, anchor="w")
         self._listing_text = tk.Text(frame, font=theme.mono(10))
         self._listing_text.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(6, 0))
         # Was a pale-yellow highlight, which only works on a light listing.
@@ -98,7 +117,6 @@ class BasicTab(ttk.Frame):
         frame = ttk.Frame(parent, padding=6)
         button_row = ttk.Frame(frame)
         button_row.pack(side=tk.TOP, fill=tk.X)
-        ttk.Button(button_row, text="Refresh variables", command=self._refresh_vars).pack(side=tk.LEFT)
         ttk.Button(button_row, text="Scan pointers", command=self._scan_pointers).pack(side=tk.LEFT, padx=(8, 0))
 
         ttk.Label(frame, text="Scalars:", style="Muted.TLabel").pack(side=tk.TOP, anchor="w", pady=(8, 2))
@@ -135,17 +153,19 @@ class BasicTab(ttk.Frame):
             )
             self._highlight_current()
 
-        self.app.run_async(lambda: self.app.client.get("/api/basic_state"), done)
+        self._state_panel.run(lambda: self.app.client.get("/api/basic_state"), done)
 
     def _refresh_listing(self):
         def done(result, error):
             if error is not None:
                 self._status_var.set(f"listing failed: {self.app.describe_error(error)}")
                 return
+            if result == self._listing_data:
+                return  # identical program: redrawing would only lose the scroll
             self._listing_data = result
             self._render_listing()
 
-        self.app.run_async(lambda: self.app.client.get("/api/basic_listing"), done)
+        self._listing_panel.run(lambda: self.app.client.get("/api/basic_listing"), done)
 
     def _render_listing(self):
         self._listing_text.configure(state=tk.NORMAL)
@@ -161,13 +181,25 @@ class BasicTab(ttk.Frame):
             text = f"{line['num']:>5} " + "".join(parts) + "\n"
             self._listing_text.insert(tk.END, text)
         self._listing_text.configure(state=tk.DISABLED)
+        self._current_line = None  # the tag went with the old text
         self._highlight_current()
 
     def _highlight_current(self):
-        self._listing_text.tag_remove("current", "1.0", tk.END)
-        if not self._listing_data or not self._basic_state:
+        """Move the "you are here" tag, and only if it actually moved.
+
+        Called ~5 times a second. Re-tagging unconditionally would be cheap,
+        but the `see()` below is not: scrolling the listing to the current line
+        on every tick would make it impossible to look anywhere else while the
+        program runs. Following execution should mean following it when it
+        moves, not fighting the user's scrollbar continuously.
+        """
+        cur_line = self._basic_state.get("cur_linenum") if self._basic_state else None
+        if cur_line == self._current_line:
             return
-        cur_line = self._basic_state.get("cur_linenum")
+        self._current_line = cur_line
+        self._listing_text.tag_remove("current", "1.0", tk.END)
+        if not self._listing_data:
+            return
         for idx, line in enumerate(self._listing_data.get("lines", [])):
             if line["num"] == cur_line:
                 self._listing_text.tag_add("current", f"{idx + 1}.0", f"{idx + 1}.end")
@@ -182,7 +214,7 @@ class BasicTab(ttk.Frame):
         def done(_result, error):
             self._status_var.set(f"step failed: {self.app.describe_error(error)}" if error else "stepped")
             if not error:
-                self._refresh_state()
+                self.app.invalidate()
 
         self.app.run_async(lambda: self.app.client.post_empty(path), done)
 
@@ -190,7 +222,7 @@ class BasicTab(ttk.Frame):
         def done(_result, error):
             self._status_var.set(f"step back failed: {self.app.describe_error(error)}" if error else "stepped back")
             if not error:
-                self._refresh_state()
+                self.app.invalidate()
 
         self.app.run_async(lambda: self.app.client.post_empty("/api/tl_back"), done)
 
@@ -202,7 +234,7 @@ class BasicTab(ttk.Frame):
         def done(_result, error):
             self._status_var.set(f"run-to failed: {self.app.describe_error(error)}" if error else f"ran to line {line}")
             if not error:
-                self._refresh_state()
+                self.app.invalidate()
 
         self.app.run_async(lambda: self.app.client.post_empty(f"/api/basic_runto?line={line}"), done)
 
@@ -230,6 +262,8 @@ class BasicTab(ttk.Frame):
             self._status_var.set(
                 f"inject failed: {self.app.describe_error(error)}" if error else "injected — type LIST or RUN"
             )
+            if not error:
+                self.app.invalidate()
 
         self.app.run_async(lambda: self.app.client.post_text(f"/api/basic{query}", source), done)
 
@@ -265,27 +299,31 @@ class BasicTab(ttk.Frame):
     # -- variables ---------------------------------------------------------------
 
     def _refresh_vars(self):
+        if not self._vars_panel.begin():
+            return
+
+        def fail(error):
+            self._vars_panel.end()
+            self._status_var.set(f"variables failed: {self.app.describe_error(error)}")
+
         def got_state(state, error):
             if error is not None:
-                self._status_var.set(f"variables failed: {self.app.describe_error(error)}")
-                return
+                return fail(error)
             txttop, vartop, arrend = state["txttop"], state["vartop"], state["arrend"]
             chain_addr = state["chain_heads_addr"]
 
             def got_chain(chain_resp, error):
                 if error is not None:
-                    self._status_var.set(f"variables failed: {self.app.describe_error(error)}")
-                    return
+                    return fail(error)
                 chain_bytes = bytes.fromhex(chain_resp["hex"])
 
                 def got_zones(zones, error):
                     if error is not None:
-                        self._status_var.set(f"variables failed: {self.app.describe_error(error)}")
-                        return
+                        return fail(error)
                     var_bytes, arr_bytes = zones
+                    self._vars_panel.end()
                     self._populate_vars(parse_basic_vars(chain_bytes, var_bytes, txttop))
                     self._populate_arrays(parse_basic_arrays(arr_bytes))
-                    self._status_var.set("variables refreshed")
 
                 self._fetch_zones(txttop, vartop, arrend, got_zones)
 
@@ -309,19 +347,58 @@ class BasicTab(ttk.Frame):
         self.app.run_async(fetch, callback)
 
     def _populate_vars(self, variables):
-        self._vars_tree.delete(*self._vars_tree.get_children())
-        for v in variables:
-            self._vars_tree.insert("", tk.END, text=v["name"],
-                                     values=(v["type"], v["value"], f"{v['addr']:#06x}"))
+        self._sync_tree(
+            self._vars_tree, self._var_items,
+            [(v["name"], (v["type"], v["value"], f"{v['addr']:#06x}")) for v in variables])
 
     def _populate_arrays(self, arrays):
-        self._arrays_tree.delete(*self._arrays_tree.get_children())
+        rows = []
         for a in arrays:
             elements = ", ".join(a["elements"][:20]) + ("…" if len(a["elements"]) > 20 else "")
-            self._arrays_tree.insert(
-                "", tk.END, text=a["name"],
-                values=(a["type"], "×".join(str(d) for d in a["dims"]), elements, f"{a['addr']:#06x}"),
-            )
+            rows.append((a["name"], (a["type"], "×".join(str(d) for d in a["dims"]),
+                                     elements, f"{a['addr']:#06x}")))
+        self._sync_tree(self._arrays_tree, self._array_items, rows)
+
+    def _sync_tree(self, tree, items: dict, rows):
+        """Reconcile a Treeview against `rows` in place, flashing what changed.
+
+        The obvious implementation -- delete every row, insert them again --
+        would wipe the user's selection and any scroll position several times a
+        second, which is the "never reconstruct" rule from CONTEXT.md. Rows are
+        keyed by variable name, so only genuinely new or vanished variables
+        move the tree structure at all.
+        """
+        seen = set()
+        for index, (name, values) in enumerate(rows):
+            seen.add(name)
+            item = items.get(name)
+            if item is None:
+                items[name] = tree.insert("", index, text=name, values=values)
+                continue
+            if tuple(tree.item(item, "values")) != tuple(values):
+                tree.item(item, values=values)
+                self._flash_row(tree, item)
+        for name in [n for n in items if n not in seen]:
+            tree.delete(items.pop(name))
+
+    def _flash_row(self, tree, item):
+        """Change Flash for a Treeview row: two states, not a gradient.
+
+        A Treeview tag carries a whole row's colour, so there is no per-glyph
+        fade to be had here as there is in the RAM dump. A brief highlight that
+        clears itself is enough to answer "which variable just moved?".
+        """
+        tree.tag_configure("changed", foreground=theme.C["flash_fg"])
+        tree.item(item, tags=("changed",))
+        tree.after(600, lambda: self._unflash_row(tree, item))
+
+    @staticmethod
+    def _unflash_row(tree, item):
+        try:
+            if tree.exists(item):
+                tree.item(item, tags=())
+        except tk.TclError:
+            pass  # tree destroyed while the flash was pending
 
     def _scan_pointers(self):
         def done(result, error):
@@ -336,7 +413,5 @@ class BasicTab(ttk.Frame):
                     for c in candidates
                 )
                 messagebox.showinfo("scan_ptr candidates", detail, parent=self)
-
-        self.app.run_async(lambda: self.app.client.get("/api/scan_ptr"), done)
 
         self.app.run_async(lambda: self.app.client.get("/api/scan_ptr"), done)

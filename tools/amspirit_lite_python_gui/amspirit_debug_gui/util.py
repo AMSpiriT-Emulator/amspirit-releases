@@ -9,24 +9,6 @@ that file for the from-scratch derivation; this only mirrors it in Python.
 from __future__ import annotations
 
 
-class ThreadSafeMirror:
-    """A plain, GIL-safe shadow of a Tk variable's current value.
-
-    Every Tk variable read or write must happen on the Tk main thread --
-    PollingManager's `fetch`/`active` callables run on a background thread,
-    where even a `.get()` on a tk.BooleanVar/StringVar/IntVar is unsafe. This
-    mirrors one via `trace_add`, which fires on the main thread whenever the
-    widget changes; background code reads `.value` instead of calling the
-    Tk variable itself.
-    """
-
-    __slots__ = ("value",)
-
-    def __init__(self, tk_var, initial):
-        self.value = initial
-        tk_var.trace_add("write", lambda *_a: setattr(self, "value", tk_var.get()))
-
-
 # CORE_rVK_* codes (amspirit-core/inc/Core_Amspirit.h) for the keyboard tab's
 # quick-key buttons. Subset mirrors cpc-runner-amspirit's VK_TABLE.
 VK_TABLE = {

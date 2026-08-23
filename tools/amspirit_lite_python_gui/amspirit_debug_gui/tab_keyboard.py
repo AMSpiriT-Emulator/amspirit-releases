@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from amspirit_debug_gui import theme
-from amspirit_debug_gui.util import KMAT_LABELS, VK_TABLE, ThreadSafeMirror
+from amspirit_debug_gui.util import KMAT_LABELS, VK_TABLE
 
 # A matrix cell is a two-state indicator, so it gets the badge colours the
 # HTML uses for run/pause rather than a shade of the surface: the whole point
@@ -23,13 +23,14 @@ class KeyboardTab(ttk.Frame):
         self.app = app
         self._cells: dict[tuple[int, int], tk.Label] = {}
         self._hex_labels: dict[int, ttk.Label] = {}
-        self._live_var = tk.BooleanVar(value=False)
-        self._live = ThreadSafeMirror(self._live_var, False)
         self._build()
-        app.poller.register(
-            "kbd_matrix", 300, lambda: app.client.get("/api/keymatrix"),
-            self._on_matrix, active=lambda: self._live.value and app.is_tab_active("kbd")(),
-        )
+        # The only Regime B Panel in the GUI. /api/events has no topic for the
+        # key matrix, so nothing announces a keypress and there is nothing to
+        # be pushed by -- it has to ask. 100ms rather than the old opt-in
+        # 300ms: it now runs only while this tab is actually on screen, and a
+        # key matrix you watch your own fingers on has to feel immediate.
+        self._matrix_panel = app.register_panel(
+            self._matrix_frame, "B", self._refresh_matrix, interval_ms=100)
 
     def _build(self):
         send_frame = ttk.LabelFrame(self, text="Type to CPC", padding=6)
@@ -53,13 +54,7 @@ class KeyboardTab(ttk.Frame):
 
         matrix_frame = ttk.LabelFrame(self, text="CPC keyboard matrix", padding=6)
         matrix_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(8, 0))
-
-        top = ttk.Frame(matrix_frame)
-        top.pack(side=tk.TOP, fill=tk.X)
-        ttk.Checkbutton(top, text="Live refresh (300ms)", variable=self._live_var).pack(side=tk.LEFT)
-        ttk.Button(top, text="Refresh once", command=lambda: self.app.poller.trigger("kbd_matrix")).pack(
-            side=tk.LEFT, padx=(8, 0)
-        )
+        self._matrix_frame = matrix_frame
 
         grid = ttk.Frame(matrix_frame)
         grid.pack(side=tk.TOP, pady=(8, 0))
@@ -107,6 +102,9 @@ class KeyboardTab(ttk.Frame):
                 self._status_var.set(f"sent {name}")
 
         self.app.run_async(lambda: self.app.client.post("/api/keypress", {"vk": vk}), done)
+
+    def _refresh_matrix(self):
+        self._matrix_panel.run(lambda: self.app.client.get("/api/keymatrix"), self._on_matrix)
 
     def _on_matrix(self, result, error):
         if error is not None:

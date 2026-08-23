@@ -36,6 +36,11 @@ class ConfigTab(ttk.Frame):
         self.app = app
         self._crt_vars: dict[str, tk.DoubleVar] = {}
         self._build()
+        # Regime A, and this is the case that shows why Regime C is not a
+        # universal upgrade: these widgets are *inputs*. A live refresh would
+        # yank a slider out from under the user mid-drag. Reading once on
+        # arrival is not a limitation here, it is the correct behaviour.
+        self._panel = app.register_panel(self, "A", self._refresh_render)
 
     def _build(self):
         model_frame = ttk.LabelFrame(self, text="Machine", padding=8)
@@ -69,8 +74,7 @@ class ConfigTab(ttk.Frame):
         self._screen_type_var = tk.StringVar(value=SCREEN_TYPE_CHOICES[0][0])
         ttk.Combobox(top, textvariable=self._screen_type_var, values=[n for n, _ in SCREEN_TYPE_CHOICES], width=14,
                      state="readonly").pack(side=tk.LEFT, padx=(2, 12))
-        ttk.Button(top, text="Refresh", command=self._refresh_render).pack(side=tk.LEFT)
-        ttk.Button(top, text="Apply monitor/screen", command=self._apply_monitor).pack(side=tk.LEFT, padx=(6, 0))
+        ttk.Button(top, text="Apply monitor/screen", command=self._apply_monitor).pack(side=tk.LEFT)
 
         sliders = ttk.Frame(render_frame)
         sliders.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(10, 0))
@@ -120,7 +124,7 @@ class ConfigTab(ttk.Frame):
                     self._crt_vars[key].set(value)
             self._status_var.set("render config refreshed")
 
-        self.app.run_async(lambda: self.app.client.get("/api/render"), done)
+        self._panel.run(lambda: self.app.client.get("/api/render"), done)
 
     def _apply_monitor(self):
         presets = list(self._monitor_combo["values"])
