@@ -1,26 +1,16 @@
 # AMSpiriT-Lite — Embedded HTTP Debug Server
 
-Files: `amspirit-helpers/inc/web_server.h`, `amspirit-helpers/src/web_server.cpp`
-
 This file is the narrative companion to the machine-readable API contract
 served by the API itself at `GET /api/doc` (list of endpoints) and
 `GET /api/doc/<name>` (per-endpoint method/params/response shape, `<name>`
-being the path under `/api/`, e.g. `/api/doc/config` for `/api/config`). The
-source of truth for that structured contract is the table in
-`amspirit-helpers/src/web_doc.cpp` — this markdown keeps the behavioral
-nuance and gotchas (SHIFT stickiness, `CPC_COUNTRY`, caveats, full curl
-examples) that don't reduce to structured data. **The two do not
-auto-sync**: when adding or changing an endpoint, update the entry in
-`web_doc.cpp`, the corresponding section below, and, if the endpoint is
-wrapped there, `tools/mcp-emulator/server.py`.
+being the path under `/api/`, e.g. `/api/doc/config` for `/api/config`). 
 
 ## Overview
 
-Minimal HTTP server started automatically by `amspirit-lite-sdl` and the Qt
-frontend (`amspirit-lite-qt`). All endpoints behave identically on both.  
+Minimal HTTP server started automatically by (`amspirit-lite-sdl`) and the Qt frontend (`amspirit-lite-qt`). 
+All endpoints behave identically on both.  
 Single-threaded, one request at a time, no keep-alive.  
-Listens only on `127.0.0.1:8765` (loopback only, never exposed on the network).  
-If the port is occupied, the server simply remains disabled — no fatal error.
+Listens on `127.0.0.1:8765` 
 
 ---
 
@@ -30,8 +20,7 @@ If the port is occupied, the server simply remains disabled — no fatal error.
 
 #### `WebServerOpts`
 
-Configuration parameter passed to `web_server_start`. Must remain alive
-as long as the server is running.
+Configuration parameter passed to `web_server_start`. Must remain alive as long as the server is running.
 
 | Field | Type | Default | Role |
 |---|---|---|---|
@@ -189,6 +178,7 @@ No-op if no clients are connected (cheap check, no lock held when idle).
 | `basic_line` | `uint16_t` | BASIC_BP |
 | `basic_addr` | `uint16_t` | BASIC_BP |
 | `is_hard` | `bool` | RESET |
+
 Call **at the start of each frame** in the main loop (SDL thread).  
 Returns `true` if a command is pending and copies it to `out` (then clears `pending`).  
 The command must be applied immediately before resuming emulation.  
@@ -1767,9 +1757,7 @@ web_server_stop();
 
 ## Known Limitations
 
-- Only one simultaneous client (accept + handle + close are sequential).
-- No keep-alive; each request opens a new TCP connection.
 - Headers are capped at 64 KB; the body (used by `/api/media`) is read per the
   request's `Content-Length`, capped at 8 MB. No chunked transfer-encoding.
-- No authentication: reserved for localhost only.
+- No authentication: localhost by default.
 - State read (`/api/state`) without lock — data is consistent frame-by-frame.

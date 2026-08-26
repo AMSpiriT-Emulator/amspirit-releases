@@ -1,4 +1,4 @@
-# AMSpiriT — Releases
+# AMSpiriT - Releases
 
 This repository hosts the official binary releases of the **AMSpiriT** Amstrad CPC emulator family, along with user documentation.
 
@@ -14,14 +14,15 @@ Two editions are distributed here.
 
 The original, feature-complete Windows desktop application written by **David MANUEL**. It offers a polished user interface, full media support (DSK, HFE, IPF, CDT, SNA, CPR), and is the reference implementation. Windows only.
 
-### AMSpiriT Lite *(portable — experimental)*
+### AMSpiriT Lite *(portable - experimental)*
 
 A cross-platform port of the same emulation core, targeting Linux, macOS, and Windows. Three frontends are included:
 
 | Frontend | Status | Notes |
 |---|---|---|
 | **SDL2** | Working | Minimal desktop UI; drag-and-drop media loading; embedded HTTP debug server |
-| **Qt** | Experimental | Richer UI in progress; gamepad support via Qt5 Gamepad |
+| **Qt** | Working | Richer UI in progress; gamepad support via Qt5 Gamepad |
+| **Headless** | Working | For testing, automation, CI |
 | **Libretro** | Partial | For use inside RetroArch |
 
 AMSpiriT Lite exposes advanced developer features: 
@@ -41,14 +42,11 @@ Releases are published as GitHub Releases. Each release includes binaries for al
 | Platform | Architecture | Frontend | Package |
 |---|---|---|---|
 | Windows | x86_64 | AMSpiriT (original) | `.zip` |
-| Linux | x86_64 | AMSpiriT Lite — SDL + Qt | `AppImage` |
-| Linux | aarch64 | AMSpiriT Lite — SDL2 +Qt| `AppImage` |
-| macOS | Apple Silicon (arm64) | AMSpiriT Lite — SDL2 + Qt | `.dmg` |
+| Linux | x86_64 | AMSpiriT Lite - SDL + Qt | `AppImage` |
+| Linux | aarch64 | AMSpiriT Lite - SDL2 +Qt| `AppImage` |
+| macOS | Apple Silicon (arm64) | AMSpiriT Lite - SDL2 + Qt | `.dmg` |
+| Windows | x86_64 | AMSpiriT Lite - SDL2 +Qt | `.zip` |
 
-Coming soon:
-
-| Windows | x86_64 | AMSpiriT Lite — SDL2 | `.zip` |
-| Windows | x86_64 | AMSpiriT Lite — Qt | `.zip` |
 and Retro Arch for x86_64,aarch64, Apple Silicon, and Windows.
 
 > Older CPUs (pre-SSE4.2 or pre-ARMv8.2) are not supported.
@@ -64,18 +62,18 @@ Go to the [**Releases**] tab and pick the latest version. Each release page list
 ### Windows
 
 1. **AMSpiriT (original)**: run the installer, then launch *AMSpiriT* from the Start menu.
-2. **AMSpiriT Lite — Qt**: unzip the archive anywhere, then double-click `amspirit-lite-qt.exe`. All runtime DLLs are bundled.
-3. **AMSpiriT Lite — SDL2**: unzip and run `amspirit-lite-sdl.exe`. Pass `--help` for CLI options.
+2. **AMSpiriT Lite - Qt**: unzip the archive anywhere, then double-click `amspirit-lite-qt.exe`. All runtime DLLs are bundled.
+3. **AMSpiriT Lite - SDL2**: unzip and run `amspirit-lite-sdl.exe`. Pass `--help` for CLI options.
 
 ### Linux
 
 Download the AppImage, **make it executable**, and run it:
 
-> **Required step — do not skip.** AppImages downloaded from the web are not executable by default. Without `chmod +x` the file will not launch.
+> **Required step - do not skip.** AppImages downloaded from the web are not executable by default. Without `chmod +x` the file will not launch.
 
 ```bash
 chmod +x AMSpiriT-Lite-x86_64.AppImage
-./AMSpiriT-Lite-x86_64.AppImage -R /path/to/ROMs
+./AMSpiriT-Lite-x86_64.AppImage 
 ```
 
 ### macOS
@@ -91,21 +89,22 @@ The [`examples/`](examples/) directory contains ready-to-use files to get starte
 ### BASIC programs (`.bas`)
 
 Inject any of these into the emulator via **Tools → Inject BASIC** (Qt frontend) or the [BASIC injection API](docs/basic_injection_export.md):
+
 You also can drag'n drop the files.
 
 | File | Description |
 |---|---|
 | [`print_char.bas`](examples/print_char.bas) | Prints all printable ASCII characters (32–127). Minimal "hello world" to verify injection works. |
-| [`deuxlignes.bas`](examples/deuxlignes.bas) | Sound + graphics demo: animated drawing with AY sound. Tests SOUND, MOVE, DRAWR, and MODE. |
-| [`labyrinth.bas`](examples/labyrinth.bas) | One-liner that draws random characters using CRTC register tricks. Stress-tests the display loop. |
+| [`deuxlignes.bas`](examples/deuxlignes.bas) | 2 lines animated drawing with sound. Tests SOUND, MOVE, DRAWR, and MODE. |
+| [`labyrinth.bas`](examples/labyrinth.bas) | One-liner that draws random characters |
 
 ### Web server test page
 
-[`amspirit-lite-web-server-test.html`](examples/amspirit-lite-web-server-test.html) is a self-contained HTML page you can open in any browser to interact with the embedded HTTP debug server.
+[`amspirit-lite-web-server-test.html`](examples/amspirit-lite-web-server-test.html) is a self-contained HTML page you can open in any browser to interact with the embedded HTTP debug server. 
 
 **Usage:**
 
-1. Start AMSpiriT Lite with the web server enabled (it listens on `http://localhost:6128` by default).
+1. Start AMSpiriT Lite with the web server enabled (it listens on `http://localhost:6345` by default).
 2. Open `amspirit-lite-web-server-test.html` in your browser.
 3. Use the buttons to send requests to every documented endpoint (reset, inject BASIC, read/write memory, take a screenshot, etc.) and inspect the JSON responses inline.
 
@@ -118,7 +117,7 @@ GUI counterpart to the web server test page above, covering the same debug
 API (keyboard, BASIC editor/stepping, CPU registers/RAM/breakpoints, a live
 RAM heatmap, audio waveform, disk, scripting, CRT config) as a standalone
 Python application instead of a browser page. Built with the Python
-standard library only (Tkinter) — no `pip install` needed. It's the first
+standard library only (Tkinter) - no `pip install` needed. It's the first
 example here shipped as its own subdirectory rather than a single flat
 file; see its own [README](examples/amspirit-lite-python-gui/README.md) for
 requirements and usage.
@@ -151,7 +150,7 @@ The Amstrad CPC ROMs are the property of Amstrad plc, redistributed with permiss
 * **AMSpiriT Original** version (Windows) and Core was written by Dmanu78 with Technical supervision by Longshot, and some support by Siko
 * **AMSpirit Lite** was developed by Siko, Mac Port and VSCode plugins by Gurneyh
 * **Basic Tokenizer** written by Tronic
-* **Test Team**: Tronic, Fred/Fugitif, LordHeavy, Ricolaoz
+* **Test Team**: Fred/Fugitif, LordHeavy, Ricolaoz, Ldir Hector
 
 # Acknowledgments
 
