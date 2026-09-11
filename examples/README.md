@@ -21,14 +21,14 @@ flat file, since it's split into one module per tab.
 ## Usage
 
 Start AMSpiriT Lite with the web server enabled (`--web-server`, default
-port `8765`), then:
+port `6128`), then:
 
 ```bash
 cd amspirit-lite-debug-gui
-python3 -m amspirit_debug_gui --host 127.0.0.1 --port 8765
+python3 -m amspirit_debug_gui --host 127.0.0.1 --port 6128
 ```
 
-Both flags default to `127.0.0.1:8765`, so plain `python3 -m
+Both flags default to `127.0.0.1:6128`, so plain `python3 -m
 amspirit_debug_gui` works out of the box against a local instance. The
 host/port fields in the app's top bar can also be changed and reconnected
 at any time without restarting.

@@ -1,7 +1,7 @@
 # amspirit-emulator MCP server
 
 Experimental MCP server exposing the SDL2/Qt frontends' embedded debug web API
-(`127.0.0.1:8765`, see `src/doc/web_server_api.md`) as tools, for piloting and
+(`127.0.0.1:6128`, see `src/doc/web_server_api.md`) as tools, for piloting and
 analysing a running emulator instance: state inspection, RAM read/write,
 Z80/BASIC breakpoints and stepping, keyboard input, screenshots.
 
@@ -45,7 +45,7 @@ Claude Desktop (`claude_desktop_config.json`):
 }
 ```
 
-`AMSPIRIT_WEB_URL` overrides the default `http://127.0.0.1:8765` if the
+`AMSPIRIT_WEB_URL` overrides the default `http://127.0.0.1:6128` if the
 frontend was started with a different `--web-server` port/bind address.
 
 ## Tools

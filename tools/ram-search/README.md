@@ -36,7 +36,7 @@ directly in a browser — no build step, no server of its own.
 ## Connecting to the emulator
 
 The page talks to the emulator's `--web-server` debug API. By default it
-targets `127.0.0.1:8765`. If it can't connect (wrong host, custom port, or
+targets `127.0.0.1:6128`. If it can't connect (wrong host, custom port, or
 the emulator running on another machine on the network), use the **Server**
 field to point it at a different `host:port` and click **Connect** — the
 address is remembered in the browser for next time.

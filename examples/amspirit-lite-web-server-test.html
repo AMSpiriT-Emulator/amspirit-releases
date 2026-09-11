@@ -46,7 +46,7 @@ textarea{resize:vertical;min-height:48px;width:100%}
 </head>
 <body>
 <h1>AMSpiriT — Web Server Endpoint Tests</h1>
-<p class="subtitle">Each section issues one real HTTP request to 127.0.0.1:8765 and shows the raw response.</p>
+<p class="subtitle">Each section issues one real HTTP request to 127.0.0.1:6128 and shows the raw response.</p>
 
 <!-- ======================= SSE ======================= -->
 <h2>Server-Sent Events — /api/events</h2>
@@ -730,7 +730,7 @@ wait(20)</textarea>
 </div>
 
 <script>
-const BASE = 'http://127.0.0.1:8765';
+const BASE = 'http://127.0.0.1:6128';
 
 function showResult(respId, badgeId, status, text) {
   const el = document.getElementById(respId);
