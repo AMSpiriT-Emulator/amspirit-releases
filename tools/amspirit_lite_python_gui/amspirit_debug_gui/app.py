@@ -188,7 +188,7 @@ class DebugGuiApp(tk.Tk):
     # still moves under single-step, timelapse and direct RAM writes.
     _PAUSE_TICK_MS = 500
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 8765):
+    def __init__(self, host: str = "127.0.0.1", port: int = 6128):
         super().__init__()
         self.title("AMSpiriT Lite — Debug GUI")
         self.geometry("1180x760")

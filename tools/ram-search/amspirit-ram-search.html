@@ -45,7 +45,7 @@ tr:hover td{background:#252525}
   (lose a life, score a point…), then keep only the addresses whose new
   value matches what you'd expect. Repeat until one address remains — or
   test the survivors by writing to them.
-  Talks directly to the embedded web server (by default at <code>127.0.0.1:8765</code>)
+  Talks directly to the embedded web server (by default at <code>127.0.0.1:6128</code>)
 </p>
 
 <div class="panel row">
@@ -57,7 +57,7 @@ tr:hover td{background:#252525}
 
 <div class="panel row">
   <label>Server</label>
-  <input id="server-addr" size="24" placeholder="127.0.0.1:8765">
+  <input id="server-addr" size="24" placeholder="127.0.0.1:6128">
   <button onclick="applyServerAddr()">Connect</button>
   <span class="hint">host:port of the emulator's web debug server (saved for next time)</span>
 </div>
@@ -142,7 +142,7 @@ tr:hover td{background:#252525}
 </div>
 
 <script>
-const DEFAULT_ADDR = '127.0.0.1:8765';
+const DEFAULT_ADDR = '127.0.0.1:6128';
 let g_serverAddr = localStorage.getItem('ram-search-server-addr') || DEFAULT_ADDR;
 let BASE = 'http://' + g_serverAddr;
 

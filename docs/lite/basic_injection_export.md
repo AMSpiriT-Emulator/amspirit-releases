@@ -77,7 +77,7 @@ The program is injected ~3 seconds after boot (allowing BASIC to initialize). Ty
 #### Web API
 
 ```bash
-curl -X POST http://127.0.0.1:8765/api/basic \
+curl -X POST http://127.0.0.1:6128/api/basic \
      -H 'Content-Type: text/plain' \
      --data-binary @myprogram.bas
 ```
@@ -92,7 +92,7 @@ Optional query parameters:
 Example: inject and auto-run:
 
 ```bash
-curl -X POST 'http://127.0.0.1:8765/api/basic?run=1' \
+curl -X POST 'http://127.0.0.1:6128/api/basic?run=1' \
      -H 'Content-Type: text/plain' \
      --data-binary '10 PRINT "HELLO"\n20 GOTO 10'
 ```
@@ -152,16 +152,16 @@ The export process reverses tokenization:
 
 ```bash
 # Export and save to a file
-curl http://127.0.0.1:8765/api/basic_export > exported.bas
+curl http://127.0.0.1:6128/api/basic_export > exported.bas
 
 # Verbose output (extra whitespace for readability)
-curl 'http://127.0.0.1:8765/api/basic_export?verbose=1' > exported_readable.bas
+curl 'http://127.0.0.1:6128/api/basic_export?verbose=1' > exported_readable.bas
 ```
 
 #### Check BASIC State
 
 ```bash
-curl http://127.0.0.1:8765/api/basic_state
+curl http://127.0.0.1:6128/api/basic_state
 ```
 
 Response:
@@ -211,7 +211,7 @@ Adds extra formatting for readability:
 amspirit-lite-sdl --web-server --no-splash &
 
 # 2. Inject a BASIC program
-curl -X POST 'http://127.0.0.1:8765/api/basic?run=1' \
+curl -X POST 'http://127.0.0.1:6128/api/basic?run=1' \
      -H 'Content-Type: text/plain' \
      --data-binary <<'EOF'
 10 MODE 1
@@ -225,7 +225,7 @@ curl -X POST 'http://127.0.0.1:8765/api/basic?run=1' \
 EOF
 
 # 3. After testing, export the program
-curl http://127.0.0.1:8765/api/basic_export > palette_test.bas
+curl http://127.0.0.1:6128/api/basic_export > palette_test.bas
 
 # 4. Archive
 cp palette_test.bas ~/amspirit_programs/
@@ -236,7 +236,7 @@ cp palette_test.bas ~/amspirit_programs/
 Using a Makefile:
 
 ```makefile
-DEV_SERVER := http://127.0.0.1:8765
+DEV_SERVER := http://127.0.0.1:6128
 
 # Auto-tokenize and run
 dev-inject:
@@ -259,7 +259,7 @@ dev-export:
 #!/bin/bash
 # test_basic.sh — regression test a BASIC program
 
-SERVER="http://127.0.0.1:8765"
+SERVER="http://127.0.0.1:6128"
 
 # Launch emulator with web server
 amspirit-lite-sdl --web-server --no-splash &
@@ -381,14 +381,14 @@ Some edge cases in detokenization:
 
 ```bash
 # Get the raw bytes
-curl 'http://127.0.0.1:8765/api/ram?addr=0x0170&len=256' | jq '.hex'
+curl 'http://127.0.0.1:6128/api/ram?addr=0x0170&len=256' | jq '.hex'
 
 # Detokenize manually
-curl http://127.0.0.1:8765/api/basic_export
+curl http://127.0.0.1:6128/api/basic_export
 ```
 
 ### Re-export with verbose formatting
 
 ```bash
-curl 'http://127.0.0.1:8765/api/basic_export?verbose=1'
+curl 'http://127.0.0.1:6128/api/basic_export?verbose=1'
 ```

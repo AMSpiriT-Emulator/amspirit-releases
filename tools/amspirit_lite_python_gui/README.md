@@ -26,14 +26,14 @@ A Tkinter-based graphical debugger for **AMSpiriT-Lite** — an Amstrad CPC 6128
 
 ```bash
 cd /path/to/amspirit-releases
-PYTHONPATH=tools/amspirit_lite_python_gui:$PYTHONPATH python3 -m amspirit_debug_gui --port 8765
+PYTHONPATH=tools/amspirit_lite_python_gui:$PYTHONPATH python3 -m amspirit_debug_gui --port 6128
 ```
 
 ### Option 2: Add to PYTHONPATH Permanently
 
 ```bash
 export PYTHONPATH="/path/to/amspirit-releases/tools/amspirit_lite_python_gui:$PYTHONPATH"
-python3 -m amspirit_debug_gui --port 8765
+python3 -m amspirit_debug_gui --port 6128
 ```
 
 ### Option 3: Install as Editable Package (Development)
@@ -41,22 +41,22 @@ python3 -m amspirit_debug_gui --port 8765
 ```bash
 cd /path/to/amspirit-releases/tools/amspirit_lite_python_gui
 pip install -e .
-amspirit_debug_gui --port 8765
+amspirit_debug_gui --port 6128
 ```
 
 ## Usage
 
 ### Starting the GUI
 
-The emulator's debug server must be running on port 8765 (default).
+The emulator's debug server must be running on port 6128 (default).
 
 ```bash
-python3 -m amspirit_lite_python_gui [--host 127.0.0.1] [--port 8765]
+python3 -m amspirit_lite_python_gui [--host 127.0.0.1] [--port 6128]
 ```
 
 **Options:**
 - `--host` — Debug server host (default: `127.0.0.1`)
-- `--port` — Debug server port (default: `8765`)
+- `--port` — Debug server port (default: `6128`)
 
 ### Keyboard Tab
 
@@ -207,4 +207,4 @@ Same as AMSpiriT-Lite.
 
 - **AMSpiriT-Lite API Reference**: `docs/lite/web_api.md`
 - **Scripting Reference**: `docs/lite/scripting.md`
-- **Web UI**: `amspirit-lite.html` (embedded in the emulator, serves on `http://127.0.0.1:8765/`)
+- **Web UI**: `amspirit-lite.html` (embedded in the emulator, serves on `http://127.0.0.1:6128/`)

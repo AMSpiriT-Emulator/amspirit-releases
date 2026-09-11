@@ -135,11 +135,54 @@ requirements and usage.
 | `.wav` | Cassette tape | Audio tape |
 | `.sna` | Snapshot | V1 and V2 |
 | `.cpr` | Cartridge | CPC Plus / GX4000 |
+| `.bin` / `.amsdos` | Raw binary | With an AMSDOS header, or headerless using the [`@` filename convention](#binary-files-and-the--filename-convention) below |
 
 Drag and drop any supported file onto the emulator window to load it instantly.
 Files changes are detected, and automatically reloaded. Great for developers. You can edit your bas file in an external editor and update it automatically when you save it on disk! Easy!
 
 The Amstrad CPC ROMs are the property of Amstrad plc, redistributed with permission for personal use only.
+
+### Binary files and the `@` filename convention
+
+A `.bin` file with an **AMSDOS header** is self-describing: the emulator reads
+its load address and, for an executable, its entry point straight from the
+file.
+
+A **headerless** raw binary carries no such information, so AMSpiriT Lite reads
+it from the filename instead:
+
+| Filename | Meaning |
+|---|---|
+| `game.bin` | No address — needs `--bin-address` on the command line, or it won't load |
+| `game@1000.bin` | Load at `&1000`, don't run |
+| `game@1000@2000.bin` | Load at `&1000`, then jump to `&2000` |
+
+Addresses are **hexadecimal, four digits** (`&` and `0x` omitted). The first is
+the origin, the second the entry point.
+
+**Exporting.** In the Qt and ImGui frontends, **Tools → Save binary file** dumps
+a slice of CPC memory. Give it an address and a length; if you leave *Prepend
+AMSDOS header* unchecked, the filename proposed in the save dialog already
+carries the convention — enter `1000` as the address and `2000` as the entry
+point and you are offered `dump@1000@2000.bin`, which loads straight back with
+a drag and drop. When a disk or tape is loaded, its name is used instead of
+`dump` (`sorcery@1000@2000.bin`). The entry point is optional: without it you get
+`dump@1000.bin`. The proposed name is only a suggestion; you can rename freely,
+but a name without the `@` tokens will need `--bin-address` to reload.
+
+With *Prepend AMSDOS header* checked, no `@` suffix is added — the addresses
+live in the header, and having a second, renameable copy in the filename would
+only let the two disagree.
+
+**Extended memory.** The address field also accepts the `Bnn:hhhh` notation for
+banks beyond the base 64K (`B04:2000`). Those addresses cannot go into a
+filename — `:` is not a legal filename character on Windows — so exporting from
+such a bank proposes a plain `dump.bin` and tells you so; reload it with
+`--bin-address B04:2000`.
+
+The entry point is always a plain CPU address (`2000`), never bank-prefixed:
+the Z80 jumps to a 16-bit address, it has no notion of a bank.
+
 
 
 ---
@@ -167,5 +210,3 @@ Copyright (c) 2020-2026 David Manuel & AMSpiriT Team
 
 This software is licensed under the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International Public License. 
 To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-nd/4.0/ or see the LICENSE.txt file.
-
-

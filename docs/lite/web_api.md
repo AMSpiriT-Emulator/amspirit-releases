@@ -1,16 +1,34 @@
 # AMSpiriT-Lite — Embedded HTTP Debug Server
 
+Files: `amspirit-helpers/inc/web_server.h`, `amspirit-helpers/src/web_server.cpp`
+
 This file is the narrative companion to the machine-readable API contract
 served by the API itself at `GET /api/doc` (list of endpoints) and
 `GET /api/doc/<name>` (per-endpoint method/params/response shape, `<name>`
-being the path under `/api/`, e.g. `/api/doc/config` for `/api/config`). 
+being the path under `/api/`, e.g. `/api/doc/config` for `/api/config`). The
+source of truth is the **route record** — the table in
+`amspirit-helpers/src/web_handle.cpp`, whose shape is declared in
+`web_doc.h`. The router, `GET /api/doc` and the summary table below are
+projections of it; this markdown keeps the behavioral nuance and gotchas
+(SHIFT stickiness, `CPC_COUNTRY`, caveats, full curl examples) that don't
+reduce to structured data.
+
+Adding or changing an endpoint means editing the record, then this file's
+section and summary row. **That is checked, not trusted**:
+`scripts/check-api-contract.py` (run by `make test` as `api-contract`) fails
+when the record describes a path this file has no section or summary row for,
+when the summary table lists a path the record does not know, or when an
+`@mcp.tool()` wrapper in `tools/mcp-emulator/server.py` calls an undocumented
+endpoint or silently drops an enum value. Params a wrapper simply does not
+expose are reported, not failed — a wrapper is allowed to be partial.
 
 ## Overview
 
-Minimal HTTP server started automatically by (`amspirit-lite-sdl`) and the Qt frontend (`amspirit-lite-qt`). 
-All endpoints behave identically on both.  
+Minimal HTTP server started automatically by `amspirit-lite-sdl` and the Qt
+frontend (`amspirit-lite-qt`). All endpoints behave identically on both.  
 Single-threaded, one request at a time, no keep-alive.  
-Listens on `127.0.0.1:8765` 
+Listens only on `127.0.0.1:6128` (loopback only, never exposed on the network).  
+If the port is occupied, the server simply remains disabled — no fatal error.
 
 ---
 
@@ -20,11 +38,12 @@ Listens on `127.0.0.1:8765`
 
 #### `WebServerOpts`
 
-Configuration parameter passed to `web_server_start`. Must remain alive as long as the server is running.
+Configuration parameter passed to `web_server_start`. Must remain alive
+as long as the server is running.
 
 | Field | Type | Default | Role |
 |---|---|---|---|
-| `port` | `uint16_t` | `8765` | TCP listen port |
+| `port` | `uint16_t` | `6128` | TCP listen port |
 | `bind_addr` | `std::string` | `"127.0.0.1"` | Bind address |
 | `p_freeze` | `bool*` | `nullptr` | Pointer to the emulator's pause flag |
 | `p_fps` | `double*` | `nullptr` | Pointer to the current FPS counter |
@@ -93,7 +112,7 @@ Consumed by `web_server_poll`.
 | `set_breakpoints` | `bool` | Replace the BASIC line-breakpoint set |
 | `breakpoints` | `std::vector<uint16_t>` | BASIC line numbers to break on |
 | `set_z80_breakpoints` | `bool` | Replace the Z80 PC breakpoint set |
-| `z80_breakpoints` | `std::vector<uint32_t>` | Z80 PC addresses (≤0xFFFF flat, or bank-qualified >0xFFFF) |
+| `z80_breakpoints` | `std::vector<MemLoc>` | Resolved breakpoint locations: RAM bank, upper ROM, firmware ROM, or an as-yet-unresolved CPU address |
 | `do_run_to` | `bool` | Resume until a one-shot target then pause |
 | `run_to_line` | `uint16_t` | Run-to target BASIC line (`0xFFFF` = use `run_to_addr`) |
 | `run_to_addr` | `uint16_t` | Run-to target statement address from `0xAE1B` |
@@ -121,7 +140,7 @@ Consumed by `web_server_poll`.
 | `data` | `std::vector<uint8_t>` | Bytes to write (empty = no write) |
 | `exec` | `bool` | If `true`, redirect the PC to `entry` after the write |
 | `entry` | `uint16_t` | Target PC when `exec == true` (default = `addr`) |
-| `bank` | `int` | `0` = central RAM; `1..N` = extended-RAM page `N−1` |
+| `bank` | `int` | 16K bank: `0–3` = base 64K, `4+` = extension (`B00`–`B103`) |
 
 `POST /api/ram` and `POST /api/exec` each push one `WebRamWrite` onto
 `WebPending::ram_writes` rather than overwriting a single slot: several calls
@@ -178,7 +197,6 @@ No-op if no clients are connected (cheap check, no lock held when idle).
 | `basic_line` | `uint16_t` | BASIC_BP |
 | `basic_addr` | `uint16_t` | BASIC_BP |
 | `is_hard` | `bool` | RESET |
-
 Call **at the start of each frame** in the main loop (SDL thread).  
 Returns `true` if a command is pending and copies it to `out` (then clears `pending`).  
 The command must be applied immediately before resuming emulation.  
@@ -188,7 +206,7 @@ Thread-safe: takes `opts->mtx` internally.
 
 ## HTTP Endpoints
 
-Base URL: `http://127.0.0.1:8765`
+Base URL: `http://127.0.0.1:6128`
 
 All responses include:
 - `Access-Control-Allow-Origin: *`
@@ -219,14 +237,48 @@ whole-body problems. A `400` is returned when:
 | Value not in the accepted set | `{"rom_lang":"XX"}` | `field "rom_lang" must be one of FR, EN, SP, DA` |
 | Nothing recognised / nothing to do | `{"cpc_modle":2}`, `{"addr":256}` on `/api/ram` | `no recognised field: …` / `nothing to do: …` |
 
+**A method the path does not document answers `405 Method Not Allowed`**, never
+`400` or `404`. The response carries an `Allow` header and the same list in the
+body, both taken from the endpoint record — so a client never has to guess which
+methods a path accepts:
+
+```
+$ curl -i -X PUT http://127.0.0.1:6128/api/ram
+HTTP/1.1 405 Method Not Allowed
+Allow: GET, POST
+
+{"error":"method not allowed","allow":["GET","POST"]}
+```
+
+This was normalised: it used to be `400` on `/api/config`, `/api/codemap`,
+`/api/keymap`, `/api/render`, `/api/lang`, `/api/script` and `/api/eval`, and
+`404` everywhere else — including `/api/ram`, which documents two methods. See
+`docs/adr/0003-methode-non-documentee-repond-405.md`.
+
 `JSON.stringify({addr:NaN})` emits `{"addr":null}`, which is the wrong-type case —
 worth knowing, because it used to be accepted with a `200` and no effect.
 
 **Whitespace is not significant.** Bodies are read by a small scanner that skips
 spaces, tabs, CR and LF on both sides of each colon, so compact
 (`{"text":"RUN"}`) and pretty-printed (`{ "text" : "RUN" }`, indented multi-line)
-bodies are equivalent. Values are looked up by key, flatly: a field nested one
-level down (`{"crt":{"curvature":0.02,…}}`) is found as well.
+bodies are equivalent.
+
+**Keys are matched flatly, at any depth — this is deliberate, and clients rely on
+it.** The scanner looks for `"key"` followed by a colon anywhere in the body, so
+these two are equivalent:
+
+```json
+{ "curvature": 0.02, "scanline": 0.5 }
+{ "crt": { "curvature": 0.02, "scanline": 0.5 } }
+```
+
+The debug UI sends the nested form for `POST /api/render`; `curl` examples here
+use the flat one. The consequence to know: a key of the same name at *any* depth
+wins, so an unrelated nested object carrying a documented key name will be read.
+Bodies are small and endpoint-specific, so this has never bitten in practice —
+but it means the wire format is "these keys, somewhere", not a schema. See
+`docs/adr/0004-lecteur-json-plat-conserve.md` for why this was kept rather than
+replaced with a nesting-aware parser.
 
 ---
 
@@ -236,7 +288,7 @@ Persistent push stream. The server keeps the connection open and writes events a
 
 **Connect (JavaScript)**:
 ```js
-const es = new EventSource('http://127.0.0.1:8765/api/events');
+const es = new EventSource('http://127.0.0.1:6128/api/events');
 
 es.addEventListener('frame',    e => console.log(JSON.parse(e.data)));
 es.addEventListener('z80_bp',   e => console.log('Z80 breakpoint:', JSON.parse(e.data)));
@@ -295,6 +347,29 @@ Available topics: `frame`, `z80_bp`, `basic_bp`, `pause`, `reset`
 **WASM target**: SSE is not available on the WebAssembly build (no BSD sockets). The endpoint does not exist there; continue using polling endpoints.
 
 ---
+
+### `GET /api/doc`
+
+Lists every documented endpoint: one row per path, the methods it accepts, and
+the first operation's summary. Projection of the route record — nothing here is
+written by hand.
+
+```bash
+curl -s http://127.0.0.1:6128/api/doc
+# {"endpoints":[{"path":"/api/ping","methods":["GET"],"summary":"…"}, …]}
+```
+
+### `GET /api/doc/<name>`
+
+Full detail for one endpoint: every operation, its parameters (query or body,
+type, required-or-default) and its response shape. `<name>` is the path segment
+under `/api/` — `/api/doc/ram` describes `/api/ram`. The only prefix-matched
+route on this API. Answers `404` for a name the record does not know.
+
+```bash
+curl -s http://127.0.0.1:6128/api/doc/ram
+# {"path":"/api/ram","operations":[{"method":"GET","params":[…],…}]}
+```
 
 ### `GET /api/ping`
 
@@ -536,6 +611,20 @@ and applied by the main thread (including reset).
 
 ---
 
+### `POST /api/quit`
+
+Orderly application shutdown, available on every frontend that runs the web
+server. The quit rides the frontend's **normal exit path**: disk autosave is
+flushed to the host files (Qt/imgui prompt on a failed flush, SDL/headless log
+it), and desktop frontends save their config (the headless frontend never
+writes the shared config — by design). The request is queued and applied by
+the main thread on its next frame, so the `{"ok":true}` response is always
+sent before the process exits.
+
+**Response**: `200 application/json` — `{"ok":true}`
+
+---
+
 ### `GET /api/ram?addr=<n>&len=<n>`
 
 Reads a block of the 64 KB CPC RAM.
@@ -546,7 +635,7 @@ Reads a block of the 64 KB CPC RAM.
 |---|---|---|---|
 | `addr` | integer (decimal or `0x` hex) | `0` | 0–65535 |
 | `len` | integer | `256` | 1–65536 |
-| `bank` | integer | `0` | `0` = central RAM; `1..N` = extended-RAM page `N−1` |
+| `bank` | integer | `0` | 16K bank: `0–3` = base 64K, `4+` = extension (`B00`–`B103`). An `addr` above `0x3FFF` carries into it, so `bank=4&addr=0&len=65536` reads a whole 64 Ko bank64 |
 | `view` | string | (raw) | `cpu` = return memory **as the Z80 sees it** (lower/upper ROM overlays and RAM banking applied) instead of raw central RAM |
 
 **Response**: `200 application/json`
@@ -559,14 +648,24 @@ Reads a block of the 64 KB CPC RAM.
 }
 ```
 
-`hex` is a lowercase ASCII hexadecimal string, `len × 2` characters long.
+`hex` is a lowercase ASCII hexadecimal string, `len × 2` characters long. `addr`
+echoes the address **as requested**, not the index the read landed on inside the
+bank64 — so a client can re-send the `bank`/`addr` pair it got back and read the
+same bytes.
 
-> **Known limitation — `bank=1..N` does not show live banked RAM.** These banks
-> are read from `CORE_PARAM_OUT.Memory_Extended[]`, which is not the memory the
-> Z80 actually uses: its 64 pointers are always non-null whatever
+> **⚠ `bank` changed unit without changing name.** It used to count 64 Ko
+> *bank64s*; it now counts 16 Ko **banks**, the CPC's own unit — so a caller
+> written before this change means `bank=4*N` where it says `bank=N`. Nothing can
+> detect it: `bank=1` is valid under both readings. The server logs a `WARN` on
+> any `bank >= 1`, which is the only trace an old script leaves. See
+> [CONTEXT.md](../../CONTEXT.md) for *bank* vs *bank64*.
+>
+> **Known limitation — `bank=4+` does not show live banked RAM.** Extension
+> banks are read from `CORE_PARAM_OUT.Memory_Extended[]`, which is not the memory
+> the Z80 actually uses: its 64 pointers are always non-null whatever
 > `CORE_PARAM_IN.EXTENDED_RAM` is set to, and a byte the CPC writes into a
 > paged-in bank (via `OUT (&7Fxx)`) never appears there. Measured against the
-> prebuilt core by running real Z80 code. `bank=0` and `view=cpu` are
+> prebuilt core by running real Z80 code. `bank=0–3` and `view=cpu` are
 > unaffected — use `view=cpu` to inspect what is currently paged in at a given
 > address. This predates the memory-size setting but becomes easier to hit now
 > that more than 128 Ko can be selected.
@@ -643,7 +742,7 @@ is still being typed is appended, never dropped.
 Use `\r` (carriage return) to simulate the Enter key.
 
 ```bash
-curl -X POST http://127.0.0.1:8765/api/keytype \
+curl -X POST http://127.0.0.1:6128/api/keytype \
      -H 'Content-Type: application/json' \
      -d '{"text":"RUN\r"}'
 ```
@@ -714,7 +813,7 @@ Maximum size: from `0x0170` to `0xAE66` (~44 KB).
 
 ```bash
 # Inline program
-curl -X POST http://127.0.0.1:8765/api/basic \
+curl -X POST http://127.0.0.1:6128/api/basic \
      -H 'Content-Type: text/plain' \
      --data-binary '10 MODE 1
 20 BORDER 0
@@ -725,14 +824,14 @@ curl -X POST http://127.0.0.1:8765/api/basic \
 
 ```bash
 # From a .bas file
-curl -X POST http://127.0.0.1:8765/api/basic \
+curl -X POST http://127.0.0.1:6128/api/basic \
      -H 'Content-Type: text/plain' \
      --data-binary @myprog.bas
 ```
 
 ```bash
 # Inject and launch automatically
-curl -X POST http://127.0.0.1:8765/api/basic?run=1 \
+curl -X POST http://127.0.0.1:6128/api/basic?run=1 \
      -H 'Content-Type: text/plain' \
      --data-binary '10 PRINT "LOOP":GOTO 10'
 ```
@@ -794,8 +893,8 @@ Detokenizes and exports the current BASIC program from RAM as source text.
 **Response**: `200 text/plain; charset=utf-8` — Locomotive BASIC source
 
 ```bash
-curl http://127.0.0.1:8765/api/basic_export > exported.bas
-curl http://127.0.0.1:8765/api/basic_export?verbose=1 > exported_readable.bas
+curl http://127.0.0.1:6128/api/basic_export > exported.bas
+curl http://127.0.0.1:6128/api/basic_export?verbose=1 > exported_readable.bas
 ```
 
 If no BASIC program is loaded or RAM is unavailable, returns an empty response.
@@ -881,7 +980,7 @@ Returns the current state of the CSL/Lua scripting engine.
 | `output` | Everything `print()` produced, newline-separated (capped at 64 KiB, then `[output truncated]`) |
 
 ```bash
-curl http://127.0.0.1:8765/api/script
+curl http://127.0.0.1:6128/api/script
 ```
 
 ---
@@ -905,12 +1004,12 @@ Add `?lang=lua` for raw Lua 5.4.
 
 ```bash
 # CSL script
-curl -X POST 'http://127.0.0.1:8765/api/script' \
+curl -X POST 'http://127.0.0.1:6128/api/script' \
      -H 'Content-Type: text/plain' \
      --data-binary @myscript.csl
 
 # Lua script
-curl -X POST 'http://127.0.0.1:8765/api/script?lang=lua' \
+curl -X POST 'http://127.0.0.1:6128/api/script?lang=lua' \
      -H 'Content-Type: text/plain' \
      --data-binary @myscript.lua
 ```
@@ -931,7 +1030,7 @@ disturbing the debugger's state and sits in a second browser tab beside it. The
 Script tab of the main UI links to it.
 
 The page also works opened straight from disk (`file://`) — it detects that and
-targets `http://127.0.0.1:8765` absolutely, like the other standalone pages in
+targets `http://127.0.0.1:6128` absolutely, like the other standalone pages in
 `src/assets/`.
 
 ---
@@ -954,7 +1053,7 @@ The body is the chunk, taken verbatim: **no CSL preprocessing on this route**
 Sandboxed exactly like `POST /api/script`.
 
 ```bash
-curl -X POST http://127.0.0.1:8765/api/eval --data-binary 'cpc.getZ80().PC'
+curl -X POST http://127.0.0.1:6128/api/eval --data-binary 'cpc.getZ80().PC'
 # -> {"ok":true,"seq":1}
 ```
 
@@ -978,7 +1077,7 @@ the check above reads a flag published once per frame.
 Reads the outcome of eval `N`.
 
 ```bash
-curl 'http://127.0.0.1:8765/api/eval?seq=1'
+curl 'http://127.0.0.1:6128/api/eval?seq=1'
 # -> {"seq":1,"known":true,"done":true,"refused":false,
 #     "value":"38130","output":"","error":""}
 ```
@@ -1003,7 +1102,7 @@ globals built up by previous evals are lost. Refused (logged, not an HTTP
 error) if something is still running.
 
 ```bash
-curl -X DELETE http://127.0.0.1:8765/api/eval
+curl -X DELETE http://127.0.0.1:6128/api/eval
 ```
 
 **Response**: `200 application/json` — `{"ok":true}`
@@ -1015,7 +1114,7 @@ curl -X DELETE http://127.0.0.1:8765/api/eval
 Interrupts the currently running script.
 
 ```bash
-curl -X DELETE http://127.0.0.1:8765/api/script
+curl -X DELETE http://127.0.0.1:6128/api/script
 ```
 
 **Response**: `200 application/json` — `{"ok":true}`
@@ -1111,7 +1210,7 @@ was when it was taken (video-buffer space, the same coordinates
 | `X-Crop-W`, `X-Crop-H` | its size (`768×272` cropped, `1024×350` full) |
 
 ```bash
-curl -s 'http://127.0.0.1:8765/api/screenshot?crop=1&full=1&live=0' -o screen.png
+curl -s 'http://127.0.0.1:6128/api/screenshot?crop=1&full=1&live=0' -o screen.png
 ```
 
 ---
@@ -1142,11 +1241,11 @@ banking configuration. Drives the memory-map bar in the CPU tab.
 | `regions[].base` / `name` | 16 KB region base address |
 | `regions[].rom` | `true` if ROM is currently mapped at this region |
 | `regions[].rom_bank` | ROM number (`255` = lower/firmware ROM, else upper-ROM number, e.g. 0 = BASIC, 7 = AMSDOS) — only when `rom` |
-| `regions[].ram_bank` | Physical RAM bank (0–3 central; 4+ extended) — only when `!rom` |
-| `regions[].ext` | `true` if this RAM bank comes from extended RAM |
+| `regions[].ram_bank` | Physical 16 Ko **bank** (0–3 = base 64K, 4+ = extension) — only when `!rom`. The numbering has always been per 16 Ko, so it matches `Bnn:` |
+| `regions[].ext` | `true` if this bank comes from extended RAM |
 | `rmr` | Gate Array RMR register value |
 | `ram_mode` | RAM banking configuration (the `&7Fxx` value, 0–7) |
-| `ram_page` | Extended-RAM page (0–3) |
+| `ram_page` | bank64 selected by the RAM configuration (0–3) |
 
 ---
 
@@ -1212,6 +1311,12 @@ highlight, line/statement stepping, breakpoints, run-to, variable hover). They
 rely on the Locomotive BASIC text pointers `0xAE1D` (current line) and `0xAE1B`
 (current statement / execution address).
 
+The CRT shader block takes eleven parameters, all optional and all validated:
+`curvature`, `scanline`, `sharpness`, `maskPitch`, `mask`, `halation`,
+`diffusion`, `convergence`, `brightness`, `persistence` (numbers) and `maskType`
+(integer). A non-numeric value is a `400`, not a silent fallback to the default —
+that changed in 1.14.4, see the changelog.
+
 ### `GET /api/basic_listing`
 
 Returns the program decoded into lines and statements, each with its RAM
@@ -1264,8 +1369,8 @@ numbers (empty body clears all). While breakpoints exist, the emulator pauses
 when execution reaches a breakpoint line.
 
 ```bash
-curl -X POST http://127.0.0.1:8765/api/basic_bp -d '10,40,100'
-curl -X POST http://127.0.0.1:8765/api/basic_bp -d ''     # clear all
+curl -X POST http://127.0.0.1:6128/api/basic_bp -d '10,40,100'
+curl -X POST http://127.0.0.1:6128/api/basic_bp -d ''     # clear all
 ```
 
 **Response**: `200 application/json` — `{"ok":true}`
@@ -1412,7 +1517,7 @@ Lists the audio output devices available on this machine, and which one is curre
 An empty device name means "system default".
 
 ```bash
-curl http://127.0.0.1:8765/api/audio/devices
+curl http://127.0.0.1:6128/api/audio/devices
 ```
 
 ---
@@ -1423,17 +1528,24 @@ curl http://127.0.0.1:8765/api/audio/devices
 
 Replaces the Z80 PC breakpoint set. While breakpoints are active, the emulator pauses when the PC hits a breakpoint address.
 
-**Body**: comma-separated list of addresses — decimal, hex (`0x…`), or bank-qualified (`Cx:YYYY` where `x` is the bank number 0–N and `YYYY` is a hex offset within the bank). Empty body clears all.
+**Body**: comma-separated list, each entry either
+
+- a **CPU address** — decimal or `0x…` hex, `0`–`65535`. Note that bare digits are read as **decimal** here (`100` is 100, not `0x100`), unlike the shared notation's bare form;
+- a **physical location** — `Bnn:hhhh`, where `nn` is a 16 Ko bank index in **hex** (`B00`–`B103`) and `hhhh` a hex offset. An offset above `0x3FFF` carries into the bank, so `B00:4100` is the same byte as `B01:0100`.
+
+A CPU address names no byte on its own — what it points at depends on the paging — so it is **resolved against the live mapping when the set is applied**, and stored as the RAM bank or ROM that actually holds it. The log line says where it landed. A breakpoint therefore fires on a byte, not on an address: paging a different bank into that slot will not trigger it.
+
+The deprecated `Cx:` form is still accepted, as a **decimal** bank index (which is what it meant on this endpoint), with a warning naming the `B` form. Empty body clears all.
 
 ```bash
-# Flat address
-curl -X POST http://127.0.0.1:8765/api/z80_bp -d '0xC000,0xBD19'
+# CPU address (resolved to a bank or ROM on apply)
+curl -X POST http://127.0.0.1:6128/api/z80_bp -d '0xC000,0xBD19'
 
-# Bank-qualified (extended RAM: C4 = bank 4, offset 0x0200)
-curl -X POST http://127.0.0.1:8765/api/z80_bp -d 'C4:0200'
+# Physical location (extended RAM: bank 4, offset 0x0200)
+curl -X POST http://127.0.0.1:6128/api/z80_bp -d 'B04:0200'
 
 # Clear all
-curl -X POST http://127.0.0.1:8765/api/z80_bp -d ''
+curl -X POST http://127.0.0.1:6128/api/z80_bp -d ''
 ```
 
 **Response**: `200 application/json` — `{"ok":true}`
@@ -1447,7 +1559,7 @@ curl -X POST http://127.0.0.1:8765/api/z80_bp -d ''
 Navigates the timelapse one step back. Only meaningful while a timelapse is active (`emu.tl_active`, see `GET /api/state`) — check `emu.tl_steps_back` first to know if there is anywhere to go.
 
 ```bash
-curl -X POST http://127.0.0.1:8765/api/tl_back
+curl -X POST http://127.0.0.1:6128/api/tl_back
 ```
 
 **Response**: `200 application/json` — `{"ok":true}`
@@ -1473,7 +1585,7 @@ Returns the current CTM beam position and the crop rectangle for a given `crop=`
 ```
 
 ```bash
-curl 'http://127.0.0.1:8765/api/beam?crop=1'
+curl 'http://127.0.0.1:6128/api/beam?crop=1'
 ```
 
 ---
@@ -1492,10 +1604,10 @@ Arms or disarms a raster breakpoint at a pixel in video-buffer space (same coord
 
 ```bash
 # Arm at (256, 120)
-curl -X POST 'http://127.0.0.1:8765/api/raster_bp?x=256&y=120'
+curl -X POST 'http://127.0.0.1:6128/api/raster_bp?x=256&y=120'
 
 # Disarm
-curl -X POST 'http://127.0.0.1:8765/api/raster_bp?enable=0'
+curl -X POST 'http://127.0.0.1:6128/api/raster_bp?enable=0'
 ```
 
 **Response**: `200 application/json` — `{"ok":true}`  
@@ -1540,12 +1652,12 @@ Disk management: create a blank disk or save (download) the current disk image.
 
 ```bash
 # Create a blank disk in drive A
-curl -X POST http://127.0.0.1:8765/api/disk \
+curl -X POST http://127.0.0.1:6128/api/disk \
      -H 'Content-Type: application/json' \
      -d '{"action":"create","drive":0}'
 
 # Download current disk A as a DSK file
-curl -X POST http://127.0.0.1:8765/api/disk \
+curl -X POST http://127.0.0.1:6128/api/disk \
      -H 'Content-Type: application/json' \
      -d '{"action":"save","drive":0}' -o disk_A.dsk
 ```
@@ -1594,22 +1706,22 @@ Supported formats and how each is detected:
 | `.ipf` | content (`CAPS` magic) | Inserted into `drive` |
 | `.cpr` cartridge | content (`RIFF...AMS` magic) | Loaded as a standard cartridge |
 | `.cro` ROM set | content (`RIFF...CRO ` magic) | Triggers a hard reset |
-| `.bin`/`.amsdos` | **filename extension**, not content | AMSDOS-header binaries load directly; a headerless raw binary needs an explicit load address via `name=game@4000.bin` (optionally `@ENTRY`), e.g. `name=game@4000@4000.bin` |
+| `.bin`/`.amsdos` | **filename extension**, not content | AMSDOS-header binaries load directly; a headerless raw binary needs an explicit load address via `name=game@4000.bin` (optionally `@ENTRY`), e.g. `name=game@4000@4000.bin`. Addresses are four hex digits, flat 16-bit — no `Bnn:` prefix (its `:` is illegal in a Windows filename). The Qt/imgui **Save binary file** dialog writes names in this same form |
 | anything else (including `.cdt` tape) | fallback — no signature matched | **Known limitation**: unlike `.bin`/`.amsdos`, `.cdt` has no content signature and is *not* routed by filename extension either — the `name=` hint only special-cases `.bin`/`.amsdos`. A `.cdt` posted here currently falls through to the raw-binary path and will not load as a tape. This also affects SDL2/Qt drag-and-drop, not just this endpoint; tracked separately, not fixed by this doc update. |
 
 ```bash
 # Insert a DSK into drive A
-curl -X POST 'http://127.0.0.1:8765/api/media?name=game.dsk&drive=0' \
+curl -X POST 'http://127.0.0.1:6128/api/media?name=game.dsk&drive=0' \
      -H 'Content-Type: application/octet-stream' \
      --data-binary @game.dsk
 
 # Restore a snapshot
-curl -X POST 'http://127.0.0.1:8765/api/media?name=save.sna' \
+curl -X POST 'http://127.0.0.1:6128/api/media?name=save.sna' \
      -H 'Content-Type: application/octet-stream' \
      --data-binary @save.sna
 
 # Headerless raw binary, load address 0x4000
-curl -X POST 'http://127.0.0.1:8765/api/media?name=game@4000.bin' \
+curl -X POST 'http://127.0.0.1:6128/api/media?name=game@4000.bin' \
      -H 'Content-Type: application/octet-stream' \
      --data-binary @game.bin
 ```
@@ -1641,7 +1753,7 @@ Applies a live keymap binding change — remaps a physical key to a different CP
 | `nomod` | boolean | Suppress CPC Shift while this key is active |
 
 ```bash
-curl -X POST http://127.0.0.1:8765/api/keymap \
+curl -X POST http://127.0.0.1:6128/api/keymap \
      -H 'Content-Type: application/json' \
      -d '{"kc":"0x61","vk":1,"vk_s":1,"nomod":false}'
 ```
@@ -1656,6 +1768,9 @@ curl -X POST http://127.0.0.1:8765/api/keymap \
 | Method | Path | Description |
 |---|---|---|
 | GET | `/` | HTML web interface |
+| GET | `/api/doc` | List every documented endpoint (projection of the route record) |
+| GET | `/api/doc/<name>` | Full detail for one endpoint: operations, params, response shape |
+| GET | `/api/events` | Server-Sent Events stream, one message per emulated frame |
 | GET | `/api/ping` | Lightweight connectivity probe (also returns emu state) |
 | GET | `/api/state` | Full emulator state: Z80 / GA / PSG / FDC / emu |
 | GET | `/api/z80` | Z80 registers only |
@@ -1663,11 +1778,13 @@ curl -X POST http://127.0.0.1:8765/api/keymap \
 | GET | `/api/psg` | PSG registers only |
 | GET | `/api/fdc` | FDC registers only |
 | GET | `/api/keymatrix` | Raw 10-row CPC keyboard matrix |
+| GET | `/api/crtc` | CRTC register/counter snapshot |
 | GET | `/api/config` | Current emulator configuration |
 | POST | `/api/config` | Change model, CRTC, language, reset, pause, keyboard mapping |
+| POST | `/api/quit` | Orderly app shutdown (flushes disk autosave + config) |
 | GET | `/api/lang` | Current UI language (`en`/`fr`/`es`/`de`) |
 | POST | `/api/lang` | Change UI language |
-| GET | `/api/ram?addr=N&len=N[&bank=N][&view=cpu]` | Read bytes from RAM (raw, extended bank, or CPU-visible view) |
+| GET | `/api/ram?addr=N&len=N[&bank=N][&view=cpu]` | Read bytes from RAM (raw, a given 16K bank, or CPU-visible view) |
 | POST | `/api/ram` | Write bytes to RAM (optional execution) |
 | POST | `/api/exec` | Redirect Z80 PC |
 | POST | `/api/step` | Execute one Z80 instruction, then pause |
@@ -1757,7 +1874,9 @@ web_server_stop();
 
 ## Known Limitations
 
+- Only one simultaneous client (accept + handle + close are sequential).
+- No keep-alive; each request opens a new TCP connection.
 - Headers are capped at 64 KB; the body (used by `/api/media`) is read per the
   request's `Content-Length`, capped at 8 MB. No chunked transfer-encoding.
-- No authentication: localhost by default.
+- No authentication: reserved for localhost only.
 - State read (`/api/state`) without lock — data is consistent frame-by-frame.

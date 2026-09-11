@@ -103,7 +103,7 @@ aside.hidden{display:none}
 // Same detection as amspirit-lite.html: this page must work both served by the
 // emulator (at /console) and opened straight from disk, where relative URLs
 // would resolve to file://.
-const EMU_DEFAULT_PORT = 8765;
+const EMU_DEFAULT_PORT = 6128;
 const API_BASE = (() => {
   const l = window.location;
   if (l.protocol === 'file:') return 'http://127.0.0.1:' + EMU_DEFAULT_PORT;

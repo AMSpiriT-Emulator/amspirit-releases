@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""MCP server exposing AMSpiriT-Lite's embedded debug web API (127.0.0.1:8765)
+"""MCP server exposing AMSpiriT-Lite's embedded debug web API (127.0.0.1:6128)
 as tools for piloting and analysing a running emulator: state inspection,
 RAM read/write, Z80/BASIC breakpoints and stepping, keyboard input, and
 screenshots. See src/doc/web_server_api.md for the underlying HTTP contract,
@@ -15,7 +15,7 @@ from mcp.server.mcpserver import Image, MCPServer
 
 import z80dis
 
-BASE_URL = os.environ.get("AMSPIRIT_WEB_URL", "http://127.0.0.1:8765")
+BASE_URL = os.environ.get("AMSPIRIT_WEB_URL", "http://127.0.0.1:6128")
 
 mcp = MCPServer(
     name="amspirit-emulator",

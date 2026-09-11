@@ -10,9 +10,17 @@ Scripts execute **frame by frame** via a Lua coroutine. The `wait*` / `cpc.wait*
 
 ### Command Line
 
+A `.csl`/`.lua` file passed as the plain positional `[FILE]` argument is dispatched to the script engine by extension, exactly like `--script`:
+
 ```bash
-amspirit-lite-sdl --script test.csl
-amspirit-lite-sdl --script bench.lua
+amspirit-lite-sdl test.csl
+amspirit-lite-sdl bench.lua
+```
+
+`--script` is only needed when you also want to load a medium (disk/tape/snapshot) in the same command — the positional slot is taken by the medium, so the script goes on `--script`. This is the common pattern for headless regression runs:
+
+```bash
+amspirit-lite-headless mydisk.dsk --script test.csl
 ```
 
 ### Drag and Drop
@@ -23,22 +31,22 @@ Drop a `.csl` or `.lua` file on the emulator window.
 
 ```bash
 # Execute a CSL script (default)
-curl -X POST http://127.0.0.1:8765/api/script \
+curl -X POST http://127.0.0.1:6128/api/script \
      --data-binary @test.csl
 
 # Execute raw Lua
-curl -X POST 'http://127.0.0.1:8765/api/script?lang=lua' \
+curl -X POST 'http://127.0.0.1:6128/api/script?lang=lua' \
      --data-binary @bench.lua
 
 # Read status
-curl http://127.0.0.1:8765/api/script
+curl http://127.0.0.1:6128/api/script
 # → {"running":true,"error":""}
 
 # Stop the current script
-curl -X DELETE http://127.0.0.1:8765/api/script
+curl -X DELETE http://127.0.0.1:6128/api/script
 ```
 
-The embedded interface (accessible at `http://127.0.0.1:8765`) has a Script panel with editor, CSL/Lua selector, and Execute / Stop buttons.
+The embedded interface (accessible at `http://127.0.0.1:6128`) has a Script panel with editor, CSL/Lua selector, and Execute / Stop buttons.
 
 > Scripts sent through the web API are **sandboxed** — see
 > [Trust levels and the sandbox](#trust-levels-and-the-sandbox). Scripts loaded
@@ -192,7 +200,7 @@ a console a console.
 
 ### The page
 
-With the web server running, open **<http://127.0.0.1:8765/console>** (or the
+With the web server running, open **<http://127.0.0.1:6128/console>** (or the
 `>_ Console` button in the debug UI's Script tab). It also works opened straight
 from disk — `src/assets/amspirit-lite-console.html`, or next to the binary in a
 release build.
@@ -221,18 +229,18 @@ does not duplicate it.
 
 ```bash
 # One line, then read the answer back
-curl -X POST http://127.0.0.1:8765/api/eval --data-binary 'x = cpc.getZ80().PC'
+curl -X POST http://127.0.0.1:6128/api/eval --data-binary 'x = cpc.getZ80().PC'
 # → {"ok":true,"seq":1}
-curl 'http://127.0.0.1:8765/api/eval?seq=1'
+curl 'http://127.0.0.1:6128/api/eval?seq=1'
 # → {"seq":1,"known":true,"done":true,"refused":false,"value":"","output":"","error":""}
 
-curl -X POST http://127.0.0.1:8765/api/eval --data-binary 'string.format("%04X", x)'
+curl -X POST http://127.0.0.1:6128/api/eval --data-binary 'string.format("%04X", x)'
 # → {"ok":true,"seq":2}
-curl 'http://127.0.0.1:8765/api/eval?seq=2'
+curl 'http://127.0.0.1:6128/api/eval?seq=2'
 # → {"seq":2,...,"value":"9508",...}
 
 # Forget the accumulated globals
-curl -X DELETE http://127.0.0.1:8765/api/eval
+curl -X DELETE http://127.0.0.1:6128/api/eval
 ```
 
 Things worth knowing:
@@ -542,18 +550,18 @@ amspirit-lite-sdl --web-server --no-splash &
 PID=$!
 sleep 2  # allow time for the emulator to start
 
-curl -sf -X POST http://127.0.0.1:8765/api/script \
+curl -sf -X POST http://127.0.0.1:6128/api/script \
      --data-binary @ci/regression.csl
 
 # Wait for the script to complete
 while true; do
-    STATUS=$(curl -sf http://127.0.0.1:8765/api/script)
+    STATUS=$(curl -sf http://127.0.0.1:6128/api/script)
     RUNNING=$(echo "$STATUS" | grep -o '"running":true')
     [ -z "$RUNNING" ] && break
     sleep 1
 done
 
-ERROR=$(curl -sf http://127.0.0.1:8765/api/script | grep -o '"error":"[^"]*"')
+ERROR=$(curl -sf http://127.0.0.1:6128/api/script | grep -o '"error":"[^"]*"')
 kill $PID
 [ "$ERROR" = '"error":""' ] && echo "OK" || { echo "ERROR: $ERROR"; exit 1; }
 ```

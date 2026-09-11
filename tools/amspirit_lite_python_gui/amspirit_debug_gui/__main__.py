@@ -11,7 +11,7 @@ def main() -> int:
         description="Tkinter debug GUI for AMSpiriT Lite's embedded web server.",
     )
     ap.add_argument("--host", default="127.0.0.1", help="Debug server host (default: 127.0.0.1)")
-    ap.add_argument("--port", type=int, default=8765, help="Debug server port (default: 8765)")
+    ap.add_argument("--port", type=int, default=6128, help="Debug server port (default: 6128)")
     args = ap.parse_args()
 
     app = DebugGuiApp(host=args.host, port=args.port)
