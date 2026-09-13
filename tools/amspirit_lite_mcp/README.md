@@ -12,7 +12,7 @@ LLM client attached).
 ## Setup
 
 ```bash
-cd tools/mcp-emulator
+cd tools/amspirit_lite_mcp
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
@@ -29,7 +29,7 @@ via `make debug`/`make release`):
 Claude Code:
 
 ```bash
-claude mcp add amspirit-emulator -- /path/to/tools/mcp-emulator/.venv/bin/python /path/to/tools/mcp-emulator/server.py
+claude mcp add amspirit-emulator -- /path/to/tools/amspirit_lite_mcp/.venv/bin/python /path/to/tools/amspirit_lite_mcp/server.py
 ```
 
 Claude Desktop (`claude_desktop_config.json`):
@@ -38,8 +38,8 @@ Claude Desktop (`claude_desktop_config.json`):
 {
   "mcpServers": {
     "amspirit-emulator": {
-      "command": "/path/to/tools/mcp-emulator/.venv/bin/python",
-      "args": ["/path/to/tools/mcp-emulator/server.py"]
+      "command": "/path/to/tools/amspirit_lite_mcp/.venv/bin/python",
+      "args": ["/path/to/tools/amspirit_lite_mcp/server.py"]
     }
   }
 }
