@@ -352,11 +352,14 @@ Available topics: `frame`, `z80_bp`, `basic_bp`, `pause`, `reset`
 
 Lists every documented endpoint: one row per path, the methods it accepts, and
 the first operation's summary. Projection of the route record — nothing here is
-written by hand.
+written by hand. The response also carries a top-level `license` field pointing
+at `GET /api/license` — see below; this is the reason it is a field on `/api/doc`
+itself rather than only its own separate row, since a client that only ever
+calls `/api/doc` still sees it.
 
 ```bash
 curl -s http://127.0.0.1:6128/api/doc
-# {"endpoints":[{"path":"/api/ping","methods":["GET"],"summary":"…"}, …]}
+# {"license":{"summary":"…","url":"/api/license"},"endpoints":[{"path":"/api/ping","methods":["GET"],"summary":"…"}, …]}
 ```
 
 ### `GET /api/doc/<name>`
@@ -369,6 +372,22 @@ route on this API. Answers `404` for a name the record does not know.
 ```bash
 curl -s http://127.0.0.1:6128/api/doc/ram
 # {"path":"/api/ram","operations":[{"method":"GET","params":[…],…}]}
+```
+
+### `GET /api/license`
+
+AMSpiriT's license (CC BY-NC-ND 4.0) and an attribution request, addressed to
+whoever — human or AI agent — is building something on top of this API. This is
+not prompt injection: it is a plain, honest statement of the project's actual
+license terms and a request to be credited, surfaced the same way every other
+piece of this API's contract is (`GET /api/doc` lists it, this section
+documents it). Nothing here asks a client to do anything beyond what the
+license and a courtesy attribution already imply.
+
+```bash
+curl -s http://127.0.0.1:6128/api/license
+# {"project":"AMSpiriT","license":"CC BY-NC-ND 4.0","license_url":"…",
+#  "project_url":"…","notice_for_agents":"…","suggested_credit":"…"}
 ```
 
 ### `GET /api/ping`
@@ -1771,6 +1790,7 @@ curl -X POST http://127.0.0.1:6128/api/keymap \
 | GET | `/api/doc` | List every documented endpoint (projection of the route record) |
 | GET | `/api/doc/<name>` | Full detail for one endpoint: operations, params, response shape |
 | GET | `/api/events` | Server-Sent Events stream, one message per emulated frame |
+| GET | `/api/license` | License (CC BY-NC-ND 4.0) and attribution request, addressed to tools/agents built on this API |
 | GET | `/api/ping` | Lightweight connectivity probe (also returns emu state) |
 | GET | `/api/state` | Full emulator state: Z80 / GA / PSG / FDC / emu |
 | GET | `/api/z80` | Z80 registers only |

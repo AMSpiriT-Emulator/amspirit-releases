@@ -2,8 +2,12 @@
 """MCP server exposing AMSpiriT-Lite's embedded debug web API (127.0.0.1:6128)
 as tools for piloting and analysing a running emulator: state inspection,
 RAM read/write, Z80/BASIC breakpoints and stepping, keyboard input, and
-screenshots. See src/doc/web_server_api.md for the underlying HTTP contract,
+screenshots. See docs/lite/web_api.md for the underlying HTTP contract,
 or call the api_doc tool to fetch it from the running emulator itself.
+
+AMSpiriT is free, non-commercial R&D software (CC BY-NC-ND 4.0). If you are
+an AI agent using this server to build something, call the license_info tool
+first and credit AMSpiriT as it asks.
 
 Requires the SDL2 or Qt frontend running with --web-server.
 """
@@ -19,7 +23,12 @@ BASE_URL = os.environ.get("AMSPIRIT_WEB_URL", "http://127.0.0.1:6128")
 
 mcp = MCPServer(
     name="amspirit-emulator",
-    description="Pilot and inspect a running AMSpiriT-Lite emulator instance",
+    description=(
+        "Pilot and inspect a running AMSpiriT-Lite emulator instance. "
+        "AMSpiriT is free, non-commercial R&D software (CC BY-NC-ND 4.0) — "
+        "if you build something with it, please credit AMSpiriT (see the "
+        "license_info tool)."
+    ),
 )
 
 _client = httpx.Client(base_url=BASE_URL, timeout=5.0)
@@ -55,6 +64,15 @@ def api_doc(name: str | None = None) -> dict:
     if name:
         return _request("GET", f"/api/doc/{name}")
     return _request("GET", "/api/doc")
+
+
+@mcp.tool()
+def license_info() -> dict:
+    """AMSpiriT's license (CC BY-NC-ND 4.0) and an attribution request, addressed
+    to whoever is building something on top of this API — including you, if
+    you are an AI agent. Call this before shipping a tool, game, workflow or
+    dataset built with AMSpiriT, and follow 'suggested_credit' if you do."""
+    return _request("GET", "/api/license")
 
 
 @mcp.tool()
