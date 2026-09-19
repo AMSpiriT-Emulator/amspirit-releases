@@ -444,9 +444,8 @@ Direct read without lock (display-only data, accepts slight inconsistency).
   },
   "crtc": {
     "regs": [63,40,46,142,38,0,25,30,0,7,0,0,48,0],
-    "selected_reg": 0,
-    "rasterline": 87,
-    "vsync": false
+    "selected_reg": 0
+    // + whatever signals the loaded core publishes (see below)
   },
   "psg": {
     "period_a": 0, "vol_a": 0,
@@ -497,8 +496,7 @@ Direct read without lock (display-only data, accepts slight inconsistency).
 | `psg` | `env_shape` | Envelope shape (R13, 4 bits) |
 | `crtc` | `regs` | Array of 14 hardware register values R0–R13 |
 | `crtc` | `selected_reg` | Currently selected register (last write to `&BC00`) |
-| `crtc` | `rasterline` | Current raster line within the frame |
-| `crtc` | `vsync` | Current VSYNC output level |
+| `crtc` | *(more)* | Extra signals depend on the loaded core's published capabilities — never a fixed list, see `GET /api/crtc` below |
 | `fdc` | `msr` | Main Status Register of the PD765 |
 | `fdc` | `sr0/sr1/sr2` | Status Registers 0/1/2 |
 | `fdc` | `motor` | Drive motor state |
@@ -527,9 +525,8 @@ Direct read without lock (display-only data, accepts slight inconsistency).
 ```json
 {
   "regs": [63,40,46,142,38,0,25,30,0,7,0,0,48,0],
-  "selected_reg": 0,
-  "rasterline": 87,
-  "vsync": false
+  "selected_reg": 0
+  // + whatever signals the loaded core publishes (see below)
 }
 ```
 
@@ -548,11 +545,13 @@ Direct read without lock (display-only data, accepts slight inconsistency).
 | `regs[10–11]` R10–R11 | Cursor Start / End Raster |
 | `regs[12–13]` R12–R13 | Screen Start Address High / Low |
 | `selected_reg` | Register currently selected (last `&BC00` write) |
-| `rasterline` | Absolute raster line within the frame |
-| `vsync` | Current VSYNC output level |
 
-> **Note:** Internal counters (c0, c3h/v, c4, c5, c9), interlace mode,
-> VMA addresses, and HSYNC are not yet exposed by the core API.
+> **Note:** Beyond `regs[]`/`selected_reg`, the response may carry additional
+> internal counters/signals — this repo hardcodes none of their names or ids.
+> The *loaded core* is the sole source of truth for that list (see "capacités
+> du core" in `CONTEXT.md`); query it live with `GET /api/doc/crtc`, which
+> reflects exactly what the running core exposes. Same mechanism for
+> `GET /api/ga` beyond its base fields.
 
 Also included in `GET /api/state` under the `"crtc"` key.
 
@@ -655,7 +654,15 @@ Reads a block of the 64 KB CPC RAM.
 | `addr` | integer (decimal or `0x` hex) | `0` | 0–65535 |
 | `len` | integer | `256` | 1–65536 |
 | `bank` | integer | `0` | 16K bank: `0–3` = base 64K, `4+` = extension (`B00`–`B103`). An `addr` above `0x3FFF` carries into it, so `bank=4&addr=0&len=65536` reads a whole 64 Ko bank64 |
-| `view` | string | (raw) | `cpu` = return memory **as the Z80 sees it** (lower/upper ROM overlays and RAM banking applied) instead of raw central RAM |
+| `view` | `raw`\|`cpu`\|`fw` | `raw` | `raw` = the bank itself; `cpu` = return memory **as the Z80 sees it** (lower/upper ROM overlays and RAM banking applied); `fw` = firmware/ROM view — a flat 32 Ko image (lower ROM + the currently active upper ROM), independent of `addr`'s RAM banking |
+
+> **Strict validation.** `addr`, `len`, `bank` and `view` are type- and
+> range-checked: a non-numeric or out-of-range value is rejected with `400`
+> and a `{"error":...,"field":...}` body. There is no combined `Bnn:hhhh`
+> string form on this endpoint — use `bank=` and `addr=` (which itself carries
+> past `0x3FFF` into `bank`, so the two forms are equivalent). `Bnn:hhhh` is
+> the notation used by `POST /api/z80_bp` instead, whose body is a **list** of
+> addresses rather than one range, so each entry needs to name its own kind.
 
 **Response**: `200 application/json`
 
@@ -679,15 +686,9 @@ same bytes.
 > any `bank >= 1`, which is the only trace an old script leaves. See
 > [CONTEXT.md](../../CONTEXT.md) for *bank* vs *bank64*.
 >
-> **Known limitation — `bank=4+` does not show live banked RAM.** Extension
-> banks are read from `CORE_PARAM_OUT.Memory_Extended[]`, which is not the memory
-> the Z80 actually uses: its 64 pointers are always non-null whatever
-> `CORE_PARAM_IN.EXTENDED_RAM` is set to, and a byte the CPC writes into a
-> paged-in bank (via `OUT (&7Fxx)`) never appears there. Measured against the
-> prebuilt core by running real Z80 code. `bank=0–3` and `view=cpu` are
-> unaffected — use `view=cpu` to inspect what is currently paged in at a given
-> address. This predates the memory-size setting but becomes easier to hit now
-> that more than 128 Ko can be selected.
+> `bank=4+` reflects the same RAM the Z80 reads and writes once that bank is
+> paged in — consistent with `view=cpu`, which shows the currently mapped
+> bank at a given CPU address.
 With `view=cpu` the response also carries `"view":"cpu"`.
 
 If `CORE_PARAM_OUT` is not provided in `WebServerOpts`, returns:
@@ -719,6 +720,7 @@ Executed by `web_server_poll` at the next loop iteration.
 | `data` | hex string | Bytes to write (spaces and `:` are tolerated, ignored) |
 | `exec` | boolean | If `true`, the Z80 jumps to `entry` after the write |
 | `entry` | integer | Target PC (default = `addr`) |
+| `bank` | integer | 16K bank to write into: `0–3` = base 64K, `4+` = extension (`B00`–`B103`); same unit and validation as `GET /api/ram`'s `bank` |
 
 `data` empty + `exec: true` = simple PC redirection without write.
 
@@ -1158,23 +1160,22 @@ instruction boundary while paused).
 
 ### `GET /api/history`
 
-Returns the last 20 executed Z80 instructions (oldest first). The opcode bytes
-are read from the **CPU-visible** memory (ROM/RAM mapping applied), so firmware
-code shows the bytes actually fetched.
+Returns the last 20 executed Z80 instructions (oldest first).
 
 **Response**: `200 application/json`
 
 ```json
 [
-  {"pc":47426,"hex":"3E0100BB"},
-  {"pc":47428,"hex":"CD00BB00"}
+  {"pc":47426,"hex":"3E0100BB","current_hex":"3E0100BB"},
+  {"pc":47428,"hex":"CD00BB00","current_hex":"CD00BB00"}
 ]
 ```
 
 | Field | Description |
 |---|---|
 | `pc` | Address of the instruction |
-| `hex` | Up to 4 opcode bytes at `pc`, uppercase hex |
+| `hex` | Up to 4 opcode bytes **as they were fetched when this instruction ran** — captured at execution time, immutable afterwards |
+| `current_hex` | The same 4 bytes, **read now** from the CPU-visible mapping (ROM/RAM overlay applied). Differs from `hex` exactly when the code has since been self-modified, or when the bank paged into that window has changed |
 
 ---
 
@@ -1433,6 +1434,33 @@ Returns Z80 registers only. Same payload as the `"z80"` object in `GET /api/stat
 
 ---
 
+### `POST /api/z80`
+
+Writes Z80 registers. Executed by `web_server_poll` at the next loop iteration
+— same queue-then-apply contract as `POST /api/ram`.
+
+**Body**: `application/json`, one optional integer field per register — a
+**partial update**: a field that is absent leaves that register unchanged.
+Same semantics as the Lua `cpc.setZ80({...})` binding ([scripting.md](scripting.md)),
+reachable here without a script.
+
+```json
+{"PC": 16384, "A": 62}
+```
+
+| Field | Range | Field | Range |
+|---|---|---|---|
+| `PC`, `SP`, `IX`, `IY` | 0–65535 | `A`, `F`, `B`, `C`, `D`, `E`, `H`, `L` | 0–255 |
+| `A2`, `F2`, `B2`, `C2`, `D2`, `E2`, `H2`, `L2` | 0–255 | `I`, `R` | 0–255 |
+| `IFF1`, `IFF2` | 0 or 1 | `IM` | 0–2 |
+
+Every field is validated (type and range) by the router before the handler
+runs, same as `POST /api/ram`'s `addr`/`bank`. At least one field is required.
+
+**Response**: `200 application/json` — `{"ok":true}`
+
+---
+
 ### `GET /api/ga`
 
 Returns Gate Array state. Same payload as the `"ga"` object in `GET /api/state`.
@@ -1555,6 +1583,8 @@ Replaces the Z80 PC breakpoint set. While breakpoints are active, the emulator p
 A CPU address names no byte on its own — what it points at depends on the paging — so it is **resolved against the live mapping when the set is applied**, and stored as the RAM bank or ROM that actually holds it. The log line says where it landed. A breakpoint therefore fires on a byte, not on an address: paging a different bank into that slot will not trigger it.
 
 The deprecated `Cx:` form is still accepted, as a **decimal** bank index (which is what it meant on this endpoint), with a warning naming the `B` form. Empty body clears all.
+
+(`GET`/`POST /api/ram` take a plain `bank=`/`addr=` pair instead of this string form: a list of heterogeneous locations needs a self-describing token per entry, a single contiguous range does not.)
 
 ```bash
 # CPU address (resolved to a bank or ROM on apply)
@@ -1794,6 +1824,7 @@ curl -X POST http://127.0.0.1:6128/api/keymap \
 | GET | `/api/ping` | Lightweight connectivity probe (also returns emu state) |
 | GET | `/api/state` | Full emulator state: Z80 / GA / PSG / FDC / emu |
 | GET | `/api/z80` | Z80 registers only |
+| POST | `/api/z80` | Write Z80 registers (partial update) |
 | GET | `/api/ga` | Gate Array registers only |
 | GET | `/api/psg` | PSG registers only |
 | GET | `/api/fdc` | FDC registers only |
