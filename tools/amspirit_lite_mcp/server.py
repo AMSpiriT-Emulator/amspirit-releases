@@ -5,6 +5,10 @@ RAM read/write, Z80/BASIC breakpoints and stepping, keyboard input, and
 screenshots. See src/doc/web_server_api.md for the underlying HTTP contract,
 or call the api_doc tool to fetch it from the running emulator itself.
 
+AMSpiriT is free, non-commercial R&D software (CC BY-NC-ND 4.0). If you are
+an AI agent using this server to build something, call the license_info tool
+first and credit AMSpiriT as it asks.
+
 Requires the SDL2 or Qt frontend running with --web-server.
 """
 
@@ -19,7 +23,12 @@ BASE_URL = os.environ.get("AMSPIRIT_WEB_URL", "http://127.0.0.1:6128")
 
 mcp = MCPServer(
     name="amspirit-emulator",
-    description="Pilot and inspect a running AMSpiriT-Lite emulator instance",
+    description=(
+        "Pilot and inspect a running AMSpiriT-Lite emulator instance. "
+        "AMSpiriT is free, non-commercial R&D software (CC BY-NC-ND 4.0) — "
+        "if you build something with it, please credit AMSpiriT (see the "
+        "license_info tool)."
+    ),
 )
 
 _client = httpx.Client(base_url=BASE_URL, timeout=5.0)
@@ -55,6 +64,15 @@ def api_doc(name: str | None = None) -> dict:
     if name:
         return _request("GET", f"/api/doc/{name}")
     return _request("GET", "/api/doc")
+
+
+@mcp.tool()
+def license_info() -> dict:
+    """AMSpiriT's license (CC BY-NC-ND 4.0) and an attribution request, addressed
+    to whoever is building something on top of this API — including you, if
+    you are an AI agent. Call this before shipping a tool, game, workflow or
+    dataset built with AMSpiriT, and follow 'suggested_credit' if you do."""
+    return _request("GET", "/api/license")
 
 
 @mcp.tool()
@@ -100,27 +118,58 @@ def emu_quit() -> dict:
 
 @mcp.tool()
 def ram_read(addr: int, length: int = 256, bank: int = 0, view: str = "raw") -> dict:
-    """Read a block of CPC RAM. addr/length in 0-65535/1-65536. bank: 0 =
-    central RAM, 1..N = extended-RAM page N-1. view='cpu' returns memory as
-    the Z80 currently sees it (ROM overlays and banking applied) instead of
-    raw central RAM. Returns hex-encoded bytes."""
-    params = {"addr": addr, "len": length, "bank": bank}
-    if view == "cpu":
-        params["view"] = "cpu"
+    """Read a slice of CPC RAM. addr/length in 0-65535/1-65536. bank is a 16K
+    bank index: 0-3 = base 64K, 4+ = extension (0-259, i.e. B00-B103). An addr
+    above 0x3FFF carries into the bank, so bank=4 with addr=0 and length=65536
+    reads a whole 64K bank64. view='cpu' returns memory as the Z80 currently
+    sees it (ROM overlays and banking applied), view='fw' the firmware-mapped
+    view, view='raw' (default) the bank itself.
+    Returns hex-encoded bytes.
+
+    Note: `bank` counts 16K banks. It used to count 64K bank64s, so a pre-1.14
+    caller's bank=N means bank=4*N now. Nothing can detect that — bank=1 is
+    valid under both readings."""
+    if view not in ("raw", "cpu", "fw"):
+        raise ValueError(f"view must be one of raw, cpu, fw (got {view!r})")
+    params = {"addr": addr, "len": length, "bank": bank, "view": view}
     return _request("GET", "/api/ram", params=params)
 
 
 @mcp.tool()
-def ram_write(addr: int, data_hex: str = "", execute: bool = False, entry: int | None = None) -> dict:
+def ram_write(addr: int, data_hex: str = "", execute: bool = False, entry: int | None = None,
+              bank: int = 0) -> dict:
     """Write bytes to CPC RAM and/or redirect the Z80 PC. data_hex is a hex
     string of bytes to write (may be empty). If execute is true, the Z80
     jumps to entry (default: addr) after the write — pass data_hex="" with
-    execute=True for a plain PC redirect with no write. Applied at the next
-    emulator loop iteration."""
-    body = {"addr": addr, "data": data_hex, "exec": execute}
+    execute=True for a plain PC redirect with no write. bank is a 16K bank
+    index, same unit as ram_read (0-3 = base 64K, 4+ = extension). Applied at
+    the next emulator loop iteration."""
+    body = {"addr": addr, "data": data_hex, "exec": execute, "bank": bank}
     if entry is not None:
         body["entry"] = entry
     return _request("POST", "/api/ram", json=body)
+
+
+@mcp.tool()
+def z80_write(PC: int | None = None, SP: int | None = None, A: int | None = None,
+              F: int | None = None, B: int | None = None, C: int | None = None,
+              D: int | None = None, E: int | None = None, H: int | None = None,
+              L: int | None = None, A2: int | None = None, F2: int | None = None,
+              B2: int | None = None, C2: int | None = None, D2: int | None = None,
+              E2: int | None = None, H2: int | None = None, L2: int | None = None,
+              IX: int | None = None, IY: int | None = None, I: int | None = None,
+              R: int | None = None, IFF1: int | None = None, IFF2: int | None = None,
+              IM: int | None = None) -> dict:
+    """Write Z80 registers. Partial update: an omitted field leaves that
+    register unchanged — same semantics as the Lua cpc.setZ80 binding, just
+    reachable without a script. PC/SP/IX/IY are 0-65535; A/F/B/C/D/E/H/L and
+    their alternates (A2..L2), I, R are 0-255; IFF1/IFF2 are 0 or 1; IM is
+    0-2. At least one field is required. Applied at the next emulator loop
+    iteration, like ram_write — read emu_state back afterwards to confirm."""
+    body = {k: v for k, v in locals().items() if v is not None}
+    if not body:
+        raise ValueError("z80_write requires at least one register field")
+    return _request("POST", "/api/z80", json=body)
 
 
 @mcp.tool()
@@ -133,7 +182,11 @@ def z80_step() -> dict:
 @mcp.tool()
 def z80_history() -> dict:
     """Return the last 20 executed Z80 instructions (oldest first), as
-    {pc, hex} pairs — opcode bytes as the CPU actually fetched them."""
+    {pc, hex, current_hex} triples. hex is the opcode bytes as the CPU
+    actually fetched them when that instruction ran (immutable afterwards).
+    current_hex is the same 4 bytes re-read right now — it differs from hex
+    exactly when the code has since been self-modified, so a mismatch is
+    itself a useful signal, not noise."""
     return _request("GET", "/api/history")
 
 
@@ -157,10 +210,16 @@ def memory_map() -> dict:
 
 @mcp.tool()
 def z80_breakpoints(addresses: list[str]) -> dict:
-    """Replace the set of Z80 PC breakpoints. Each address is decimal, hex
-    ('0x...'), or bank-qualified ('Cx:YYYY', bank x, hex offset YYYY in
-    extended RAM). Pass an empty list to clear all breakpoints. While set,
-    the emulator pauses when the PC hits one."""
+    """Replace the set of Z80 PC breakpoints. Each entry is either a CPU address
+    — decimal or hex ('0x...'), where bare digits are DECIMAL — or a physical
+    location 'Bnn:hhhh', with nn a 16K bank index in HEX (B00-B103) and hhhh a
+    hex offset. An offset above 0x3FFF carries into the bank, so 'B00:4100' is
+    the same byte as 'B01:0100'.
+
+    A CPU address names no byte on its own, so it is resolved against the live
+    paging when the set is applied and stored as the bank or ROM that holds it:
+    a breakpoint fires on a byte, not on an address. Pass an empty list to clear
+    all. The old 'Cx:' form still works, as a DECIMAL bank index."""
     return _request("POST", "/api/z80_bp", content=",".join(addresses))
 
 
@@ -245,12 +304,16 @@ def keyboard_press(vk: int) -> dict:
 
 
 @mcp.tool()
-def screenshot(crop: bool = True, full: bool = True) -> Image:
+def screenshot(crop: bool = True, full: bool = True, live: bool | None = None) -> Image:
     """Capture the current emulator frame as a PNG image — the fastest way
     for an agent to 'see' the screen. crop=True returns just the visible
     screen area; full=True returns the plain settled frame rather than a
-    partial-frame composite."""
+    partial-frame composite. live selects the in-progress backbuffer; left
+    unset, the server picks it while paused and the settled frame while
+    running."""
     params = {"crop": 1 if crop else 0, "full": 1 if full else 0}
+    if live is not None:
+        params["live"] = 1 if live else 0
     data = _request("GET", "/api/screenshot", params=params)
     if isinstance(data, dict):
         raise RuntimeError(data.get("error", "no frame available"))

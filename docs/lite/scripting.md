@@ -72,10 +72,13 @@ Transformation rules:
 | `disk_insert A 'game.dsk'` | `disk_insert("A", "game.dsk")` |
 | `wait 2000000` | `wait(2000000)` |
 | `; comment` | `-- comment` |
-| `\(RET)` in a string | `\n` |
-| `\(ESC)` in a string | `\x1b` |
 
 A recognized name followed by arguments without parentheses is automatically parenthesized. Pure Lua code is passed through unchanged — both styles are mixable in the same `.csl` file.
+
+A single-quoted string argument containing a `\(NAME)` key escape is wrapped
+as a Lua long string (`[[...]]`) so Lua doesn't choke on the backslash — see
+[Special sequences in `key_output`](#special-sequences-in-key_output) for
+what these escapes mean.
 
 ---
 
@@ -90,8 +93,20 @@ wait(usec)           -- wait N microseconds (rounded up to the next frame)
 wait_frames(n)       -- wait N frames (1 frame = ~20 ms at 50 Hz)
 wait_vsyncoffon()    -- wait for the next VSYNC rising edge
 wait_driveonoff(n)   -- wait N drive motor ON/OFF cycles (default 1)
-wait_ssm0000()       -- wait for the ED 00 ED 00 sequence in the Z80
+wait_ssm0000()       -- wait for the ED 00 ED 00 sequence in the Z80 (legacy alias for wait_ssm("0000"))
+wait_ssm(code)       -- wait for a given ED xx ED yy pair; see SSM Codes below
 ```
+
+`wait_ssm(code)` accepts any of:
+
+```lua
+wait_ssm "0405"      -- CSL syntax, hex string: ED 05 ED 04
+wait_ssm("0405")     -- same, plain Lua call
+wait_ssm(0x0405)     -- Lua integer literal (hex)
+wait_ssm(1029)       -- Lua integer literal (decimal), same code as 0x0405
+```
+
+A string argument is always read as hex digits (no `0x` prefix); a numeric argument is used as-is, so a decimal or `0x`-prefixed literal both work.
 
 ### SSM Codes (Software Stepping Mechanism)
 
@@ -102,17 +117,58 @@ a second pair (`ED FF`, except `#0000` which is confirmed by `ED 00`):
 
 | Code | Bytes | Effect |
 |---|---|---|
-| `#0000` | `ED 00 ED 00` | Unblocks a pending `wait_ssm0000()` |
+| `#0000` | `ED 00 ED 00` | Unblocks a pending `wait_ssm("0000")` / `wait_ssm0000()` |
 | `#FFFF` | `ED FF ED FF` | Saves a snapshot — named by `snapshot_name`, else `AMSPIRIT_<crtc>_FFFF.sna` |
 | `#FFFE` | `ED FE ED FF` | Saves a screenshot — named by `screenshot_name`, else `AMSPIRIT_<crtc>_FFFE.png` |
 | `#FFFD` | `ED FD ED FF` | Marks the start of an event-logging window (records the global NOP tick counter) |
 | `#FFFC` | `ED FC ED FF` | Logs the number of NOPs executed since the last `#FFFD` mark (no file written; feeds trace tools like `snatool`) |
 
+Any other `ED xx ED yy` pair also unblocks a matching `wait_ssm(code)`, where
+`code` is `yy` followed by `xx` (e.g. `ED 05 ED 04` => `wait_ssm("0405")`),
+in addition to the legacy screenshot+snapshot fallback the pair triggers
+(see `ssm_handler.h`).
+
 SSM mode must be active for these codes to be intercepted — enabled
-automatically when a script calls `wait_ssm0000()`, or manually with
-`--ssm` (`--ssm-both` makes either `#FFFF` or `#FFFE` save both a snapshot
-and a screenshot). Full protocol reference: `docs/csl_specs.md` at the
-workspace root.
+automatically when a script calls `wait_ssm(code)` / `wait_ssm0000()`, or
+manually with `--ssm` (`--ssm-both` makes either `#FFFF` or `#FFFE` save both
+a snapshot and a screenshot). Full internals — call cycle from the core's
+unknown-opcode flag through to `wait_ssm` waking up, known edge cases, and
+`--debug-script` timing semantics: `doc/ssm.md`.
+
+### Debugging a script (`--debug-script`)
+
+`--debug-script` logs every executed CSL/Lua line, and every intercepted SSM
+event, so a script author can see the actual order and timing of what ran —
+without guessing from wall-clock screenshots.
+
+Each line carries a `+<delta>` right after the line number (CSL) or after
+`SSM: ` (SSM): the number of **ticks** elapsed since the previous CSL or SSM
+debug line, `+0` on the very first one. A tick is `Core_Get_Counter_1Mhz()`,
+1 MHz, so **1 tick = 1 microsecond** — the same unit as `wait(usec)`'s
+argument, even though `wait()` itself counts down whole 50 Hz frames, not
+ticks. CSL and SSM lines share one clock and print in real launch order (a
+line prints strictly before its own command runs), so their deltas
+interleave into a single, chronologically faithful timeline across both —
+which matters when checking, e.g., whether a `wait_ssm(code)` was launched
+before or after the SSM event it's waiting for. The tradeoff: a `+<delta>`
+is the elapsed time since the last debug line, i.e. often the real cost of
+the *previous* line rather than the one it's printed next to (a `wait()`/
+`key_output()`/`wait_ssm()` yields and prints nothing while pending, so its
+cost only shows up once the next line prints):
+
+```
+CSL:12: +0 wait(2000000)
+SSM: +2000000 ED FF ED FF => Save Snapshot
+CSL:13: +40 key_output('3)
+```
+
+(the `2000000` on the `SSM:` line is really how long `wait(2000000)` on
+`CSL:12` took; `key_output('3)` on `CSL:13` then ran in another 40 ticks. See
+`doc/ssm.md` for the full mechanism, including why this ordering was chosen
+over attributing each delta to its own line.)
+
+Off by default; has no effect on normal (non-debug) SSM logging, which keeps
+its current format either way.
 
 ### Machine Control
 
@@ -121,6 +177,8 @@ reset()              -- hard reset (default)
 reset("soft")        -- soft reset
 reset("hard")
 crtc_select(n)       -- change CRTC type (0–4) and reinitialize
+crtc_select("1A")    -- CRTC 1, revision A (same as crtc_select(1))
+crtc_select("1B")    -- CRTC 1, revision B
 cpc_model(n)         -- change CPC model (CORE_CPC_* constant) and reinitialize
 ```
 
@@ -150,17 +208,67 @@ key_delay(press_us, between_us [, cr_us])
                              -- configure typing delays (in microseconds)
 ```
 
-Special sequences in `key_output`:
+`key_delay` (CSL-STANDARD-EN.pdf): `press_us` sets how long each key stays
+held down before release; `between_us` sets the gap after release before the
+next key (or group); the optional `cr_us` overrides that gap specifically for
+whatever follows a `\(RET)`/`\(ENT)` press (BASIC needs longer to process a
+full command line than to move to the next keystroke — `cr_us` defaults to
+`between_us` when omitted). All three default to 19968 µs (one frame) if
+`key_delay` is never called. Two things `key_delay` cannot shorten below a
+hardware floor: a repeated identical key (see below) always gets at least
+HOLD+GAP = 9 frames total, and a SHIFTed character always gets at least 3
+frames after its release before the next key — both guard against a real
+core timing quirk (a release applied up to ~4 frames late), not something a
+script should be able to configure away. A longer `key_delay` than either
+floor is honored in full.
+
+#### Special sequences in `key_output`
+
+`key_output` sends the characters of its argument one by one; an unrecognized
+`\(NAME)` escape is skipped (a warning is logged so a typo is easy to find),
+never a script error. The full key table, from CSL-STANDARD-EN.pdf's annex
+"Specific key coding":
 
 | Sequence | Key |
 |---|---|
-| `\(RET)` | Enter |
 | `\(ESC)` | Escape |
 | `\(TAB)` | Tab |
-| `\(DEL)` | Delete |
-| `\(ARL)` `\(ARR)` `\(ARU)` `\(ARD)` | Arrow keys |
-| `\(FN0)`…`\(FN9)` | Function keys |
-| `\(SHI)` `\(CTR)` `\(CAP)` | Modifiers |
+| `\(CAP)` | Caps Lock |
+| `\(SHI)` | Shift |
+| `\(CTR)` | Control |
+| `\(COP)` | Copy (the CPC key mapped to ALT on PC) |
+| `\(CLR)` | Clr |
+| `\(DEL)` | Del (distinct from Clr — the CPC's DEL/CLR key pair, one function each) |
+| `\(RET)` | Return (main keyboard) |
+| `\(ENT)` | Enter (numeric keypad — a different physical key from Return) |
+| `\(ARL)` `\(ARR)` `\(ARU)` `\(ARD)` | Cursor left/right/up/down |
+| `\(FN0)`…`\(FN9)` | Numeric-keypad keys 0–9 |
+| `\({)` `\(})` `\(\)` `\(')` | Literal `{`, `}`, `\`, `'` characters |
+| `\(KOF)` | No delay before the next key/group (see below) |
+
+**Simultaneous key presses — `{abcd}`:** wrapping characters/escapes in
+braces presses every one of them together (all down, then all released
+together), instead of one after another. This is how a modifier combines
+with another key, per the standard's own example:
+
+```csl
+key_output '{\(SHI)1}'   ; SHIFT + 1, pressed together
+```
+
+Because a bare `{`/`}` is now group syntax, use `\({)`/`\(})` to type those
+characters literally (and `\(\)`/`\(')` for a literal `\`/`'`).
+
+**No delay — `\(KOF)`:** the delay `key_delay` normally inserts between one
+key (or group) and the next is skipped if `\(KOF)` immediately follows the
+first one — a one-shot effect, only affecting that single transition:
+
+```csl
+key_output 'A\(KOF)B'    ; no key_delay wait between A and B
+```
+
+(In raw Lua, embed the CSL escapes the same way `key_output('RUN"PROG"\n')`
+already does above: `\(NAME)` isn't a Lua escape, so wrap the string as
+`[[...]]` instead of `"..."` when it contains one.)
 
 ### Screenshots
 
@@ -572,5 +680,5 @@ kill $PID
 
 - `csl_load` cannot call `wait*` in the loaded subscript (Lua limitation: `lua_yield` through `lua_pcall` raises an error). Use `csl_load` only for configuration files without waits.
 - Drive B (`disk_insert B ...`) is parsed but ignored — only drive A is supported.
-- `wait_ssm0000` requires SSM mode to be active. It is activated automatically when a script calls this function, or manually with `--ssm`.
+- `wait_ssm`/`wait_ssm0000` requires SSM mode to be active. It is activated automatically when a script calls either function, or manually with `--ssm`.
 - `cpc.setRam` takes only a Lua binary string. To build byte sequences: `string.char(0x3E, 0x01, 0xCD, 0x00, 0xBB)`.

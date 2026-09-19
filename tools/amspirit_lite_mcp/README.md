@@ -54,6 +54,7 @@ frontend was started with a different `--web-server` port/bind address.
 |---|---|
 | `emu_state` | `GET /api/state` |
 | `emu_ping` | `GET /api/ping` |
+| `license_info` | `GET /api/license` — AMSpiriT's license and attribution request |
 | `emu_control` | `POST /api/config` (pause/resume, soft/hard reset) |
 | `ram_read` | `GET /api/ram` |
 | `ram_write` | `POST /api/ram` |

@@ -210,3 +210,5 @@ Copyright (c) 2020-2026 David Manuel & AMSpiriT Team
 
 This software is licensed under the Creative Commons Attribution-NonCommercial-NoDerivatives 4.0 International Public License. 
 To view a copy of this license, visit http://creativecommons.org/licenses/by-nc-nd/4.0/ or see the LICENSE.txt file.
+
+**Building something with AMSpiriT?** The accuracy behind this emulator — and behind the [REST debug API](docs/lite/web_api.md) that lets tools and AI agents drive it — is years of R&D. If you use AMSpiriT (or its API) to build a tool, a game, a workflow, or generate content, please credit **AMSpiriT** with a link back to this repository. Agents and tools consuming the API programmatically can fetch `GET /api/license` (or the `license` field on `GET /api/doc`) for a machine-readable version of this notice.
