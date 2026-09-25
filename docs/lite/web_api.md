@@ -1499,6 +1499,50 @@ Each byte is a bitmask of the 8 keys in that row (0 = key pressed, 1 = released,
 
 ---
 
+## CPC+ / ASIC Endpoints
+
+CPC+ hardware sprites and their ink palette, read from the core's `Core_Info_Reg_GA`
+`ASIC_Sprite_*` fields (filled only when the emulated model carries the ASIC 40489 —
+6128+, 464+, GX4000). Both endpoints answer `400` on a classic CPC.
+
+### `GET /api/asic/sprites`
+
+Returns the 16 hardware sprites: position, zoom and pixel bitmap.
+
+**Response**: `200 application/json`, or `400 {"error":"current model is not a CPC+/GX4000 (no ASIC)"}`.
+
+```json
+{"sprites": [
+  {"id": 0, "display": true, "x": 100, "y": 50, "zoom_x": 0, "zoom_y": 0, "pixels": "0000...0f0f"}
+]}
+```
+
+- `x`/`y`: signed screen position.
+- `zoom_x`/`zoom_y`: magnification shift factor — `0` = ×1, `1` = ×2, `2` = ×4.
+- `pixels`: 256 lowercase hex nibbles, row-major (16×16), one 4bpp ink index (0-15) per
+  pixel — `0` is transparent. Look each non-zero nibble up in `GET /api/asic/palette`.
+
+---
+
+### `GET /api/asic/palette`
+
+Returns the 16-entry sprite ink palette (index 0 is the transparent placeholder,
+1-15 are the hardware sprite ink registers).
+
+**Response**: `200 application/json`, or `400 {"error":"current model is not a CPC+/GX4000 (no ASIC)"}`.
+
+```json
+{"palette": [
+  {"idx": 0, "rgb444": 0, "rgb": 0},
+  {"idx": 1, "rgb444": 3852, "rgb": 16711680}
+]}
+```
+
+- `rgb444`: raw packed 12-bit hardware color (`0x0RGB`).
+- `rgb`: resolved 24-bit RGB (`0xRRGGBB`), ready for a canvas `fillStyle`.
+
+---
+
 ## Audio Endpoints
 
 ### `GET /api/audio`
@@ -1830,6 +1874,8 @@ curl -X POST http://127.0.0.1:6128/api/keymap \
 | GET | `/api/fdc` | FDC registers only |
 | GET | `/api/keymatrix` | Raw 10-row CPC keyboard matrix |
 | GET | `/api/crtc` | CRTC register/counter snapshot |
+| GET | `/api/asic/sprites` | CPC+ ASIC hardware sprites (position, zoom, pixel bitmap); 400 on non-CPC+ |
+| GET | `/api/asic/palette` | CPC+ ASIC sprite ink palette (16 entries); 400 on non-CPC+ |
 | GET | `/api/config` | Current emulator configuration |
 | POST | `/api/config` | Change model, CRTC, language, reset, pause, keyboard mapping |
 | POST | `/api/quit` | Orderly app shutdown (flushes disk autosave + config) |

@@ -1,0 +1,1549 @@
+<title>Curve Injector</title>
+<style>
+  :root{
+    --bg:#f3f1ea;
+    --panel:#ffffff;
+    --panel-2:#ece9e0;
+    --border:#d8d3c4;
+    --text:#1c1b17;
+    --muted:#6b6656;
+    --accent:#0d8f78;
+    --accent-2:#c23e7a;
+    --warn:#b8730a;
+    --good:#0d8f78;
+    --bad:#c23e3e;
+    --grid:#00000014;
+    --shadow: 0 1px 2px rgba(20,18,10,.06), 0 8px 24px rgba(20,18,10,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#0a0c10;
+      --panel:#12161d;
+      --panel-2:#181d26;
+      --border:#252c38;
+      --text:#e7ebf3;
+      --muted:#8996ab;
+      --accent:#7ee6c8;
+      --accent-2:#ff6fae;
+      --warn:#ffb84d;
+      --good:#7ee6c8;
+      --bad:#ff6b6b;
+      --grid:#ffffff10;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 28px rgba(0,0,0,.35);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#0a0c10;
+    --panel:#12161d;
+    --panel-2:#181d26;
+    --border:#252c38;
+    --text:#e7ebf3;
+    --muted:#8996ab;
+    --accent:#7ee6c8;
+    --accent-2:#ff6fae;
+    --warn:#ffb84d;
+    --good:#7ee6c8;
+    --bad:#ff6b6b;
+    --grid:#ffffff10;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 28px rgba(0,0,0,.35);
+  }
+
+  *{box-sizing:border-box;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'JetBrains Mono', ui-monospace, Menlo, Consolas, monospace;
+    padding:0 16px;
+    padding-block:20px 40px;
+  }
+  h1,h2,h3{font-family:'Press Start 2P', ui-monospace, monospace; font-weight:400; text-wrap:balance;}
+  .wrap{max-width:1100px; margin:0 auto; display:flex; flex-direction:column; gap:18px;}
+
+  header{display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;}
+  header .title-block{display:flex; flex-direction:column; gap:6px;}
+  h1{font-size:15px; margin:0; letter-spacing:.5px;}
+  .subtitle{color:var(--muted); font-size:12.5px; max-width:64ch; line-height:1.5;}
+
+  .pill{
+    display:inline-flex; align-items:center; gap:7px;
+    border:1px solid var(--border); background:var(--panel);
+    padding:6px 12px; border-radius:999px; font-size:11.5px; color:var(--muted);
+    box-shadow:var(--shadow);
+    white-space:nowrap;
+  }
+  .dot{width:8px; height:8px; border-radius:50%; background:var(--muted); flex:none;}
+  .pill.ok .dot{background:var(--good); box-shadow:0 0 8px var(--good);}
+  .pill.bad .dot{background:var(--bad);}
+  .pill.pending .dot{background:var(--warn);}
+
+  section.panel{
+    background:var(--panel); border:1px solid var(--border); border-radius:14px;
+    padding:18px 20px; box-shadow:var(--shadow);
+  }
+  section.panel > h2{font-size:11px; margin:0 0 14px; color:var(--muted); letter-spacing:1px;}
+
+  .graph-wrap{position:relative;}
+  canvas#graph{
+    width:100%; height:260px; display:block; border-radius:10px;
+    background:var(--panel-2); border:1px solid var(--border); cursor:crosshair;
+    touch-action:none;
+  }
+  .graph-caption{display:flex; justify-content:space-between; color:var(--muted); font-size:11px; margin-top:8px; gap:8px; flex-wrap:wrap;}
+  .graph-caption b{color:var(--text); font-weight:600;}
+
+  .mode-toggle{display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap;}
+  .mode-toggle button{flex:1 1 auto;}
+
+  .controls-grid{
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(190px,1fr));
+    gap:14px 20px;
+  }
+  .field{display:flex; flex-direction:column; gap:6px;}
+  .field label{font-size:11px; color:var(--muted); display:flex; justify-content:space-between;}
+  .field label span.val{color:var(--accent); font-variant-numeric:tabular-nums;}
+  select, input[type=range], input[type=text], input[type=number]{width:100%;}
+  select, input[type=text], input[type=number]{
+    background:var(--panel-2); color:var(--text); border:1px solid var(--border);
+    border-radius:8px; padding:8px 10px; font-family:inherit; font-size:12.5px;
+  }
+  input[type=range]{accent-color:var(--accent); height:20px;}
+
+  .switch-row{display:flex; align-items:center; gap:9px; font-size:11.5px; color:var(--muted); cursor:pointer; user-select:none;}
+  .switch-row input{accent-color:var(--accent); width:16px; height:16px; cursor:pointer;}
+
+  .btnrow{display:flex; gap:10px; flex-wrap:wrap; margin-top:16px; align-items:center;}
+  button{
+    font-family:inherit; font-size:12px; border-radius:9px; border:1px solid var(--border);
+    background:var(--panel-2); color:var(--text); padding:10px 14px; cursor:pointer;
+    transition:transform .08s ease, border-color .15s ease;
+  }
+  button:hover{border-color:var(--accent);}
+  button:active{transform:scale(.97);}
+  button.primary{background:var(--accent); color:#06231c; border-color:var(--accent); font-weight:600;}
+  button.primary:hover{filter:brightness(1.06);}
+  button.secondary{background:var(--accent-2); color:#2b0716; border-color:var(--accent-2); font-weight:600;}
+  button:disabled{opacity:.45; cursor:not-allowed;}
+
+  textarea{
+    width:100%; min-height:190px; background:var(--panel-2); color:var(--text);
+    border:1px solid var(--border); border-radius:10px; padding:12px 14px;
+    font-family:inherit; font-size:11.5px; line-height:1.6; resize:vertical;
+  }
+  textarea#equation{min-height:64px; font-size:13px;}
+  .msg{font-size:11.5px; color:var(--muted); margin-top:10px; line-height:1.6;}
+  .msg.err{color:var(--bad);}
+  .msg.ok{color:var(--good);}
+  .hint{font-size:11px; color:var(--muted); line-height:1.6; margin-top:8px;}
+  .hint code{background:var(--panel-2); padding:1px 5px; border-radius:4px;}
+
+  .param-columns{display:flex; gap:12px; overflow-x:auto; padding-bottom:4px;}
+  .param-col{
+    flex:1 1 150px; min-width:148px; display:flex; flex-direction:column; gap:8px;
+    padding:12px; border:1px solid var(--border); border-radius:10px; background:var(--panel-2);
+  }
+  .param-col h3{font-family:inherit; font-size:11px; color:var(--muted); margin:0; letter-spacing:.5px; text-transform:uppercase;}
+  .param-col .value-row{display:flex; gap:6px; align-items:center;}
+  .param-col .value-row input[type=range]{flex:1;}
+  .param-col .value-row input[type=number]{width:62px; flex:none; padding:5px 6px; font-size:11px;}
+  .param-col .range-row{display:flex; gap:6px;}
+  .param-col .range-row input{width:100%; padding:5px 6px; font-size:11px;}
+  .param-col .range-row label{font-size:9.5px; color:var(--muted); display:block; margin-bottom:2px;}
+  .param-col .midi-block{border-top:1px dashed var(--border); padding-top:8px; margin-top:2px; display:none; flex-direction:column; gap:6px;}
+  .param-col.midi-on .midi-block{display:flex;}
+  .param-col .midi-readout{font-size:10.5px; color:var(--muted);}
+  .param-col .midi-readout b{color:var(--text);}
+  .param-col button.learn{padding:6px 8px; font-size:10.5px; width:100%;}
+  .param-col button.learn.listening{background:var(--warn); color:#2b1a00; border-color:var(--warn);}
+
+  .midi-bar{display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:12px;}
+
+  .footnote{color:var(--muted); font-size:11px; line-height:1.7; border-top:1px solid var(--border); padding-top:14px;}
+  .footnote code{background:var(--panel-2); padding:1px 5px; border-radius:4px;}
+  a{color:var(--accent);}
+
+  @media (max-width:520px){
+    h1{font-size:12.5px;}
+  }
+</style>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=JetBrains+Mono:wght@400;500;600&display=swap">
+
+<div class="wrap">
+  <header>
+    <div class="title-block">
+      <h1>CURVE INJECTOR</h1>
+      <div class="subtitle">Draws a curve and writes it live to any address in AMSpiriT's emulated RAM — live preview, optional auto-inject, configurable output encoding, MIDI control.</div>
+    </div>
+    <div id="status" class="pill"><span class="dot"></span><span id="status-text">not tested</span></div>
+  </header>
+
+  <section class="panel">
+    <h2>MEMORY TARGET</h2>
+    <div class="controls-grid">
+      <div class="field">
+        <label>Address</label>
+        <input type="text" id="addr" value="0xC000" spellcheck="false"
+          title="Decimal (49152), hex with # or 0x prefix (#C000 / 0xC000). Bank notation is not supported yet.">
+      </div>
+      <div class="field">
+        <label>Length (bytes)</label>
+        <input type="number" id="length" min="2" max="65536" step="1" value="256">
+      </div>
+      <div class="field" style="justify-content:flex-end;">
+        <label class="switch-row" for="autoinject" title="Injects into RAM automatically whenever the curve changes.">
+          <input type="checkbox" id="autoinject">
+          Auto-inject on change
+        </label>
+      </div>
+      <div class="field">
+        <label>Auto-inject debounce (ms)</label>
+        <input type="number" id="autoinject-debounce" min="0" max="5000" step="10" value="20">
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>CURVE PREVIEW</h2>
+    <div class="graph-wrap">
+      <canvas id="graph" width="1024" height="360"
+        title="In free-draw mode, click-drag to sculpt the curve (0-255). This preview auto-scales to the curve's own values and is unaffected by the output encoding settings below."></canvas>
+    </div>
+    <div class="graph-caption">
+      <span>index: <b id="hover-i">–</b></span>
+      <span>raw value: <b id="hover-v">–</b></span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>OUTPUT PREVIEW</h2>
+    <div class="graph-wrap">
+      <canvas id="output-preview" width="1024" height="100"
+        title="Exactly what gets written to RAM: the curve after the encoding pipeline (Data), or the resulting color sequence (Gate Array)."></canvas>
+    </div>
+    <div class="graph-caption">
+      <span id="output-preview-caption">–</span>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>CURVE SOURCE</h2>
+    <div class="mode-toggle">
+      <button id="mode-param" class="primary">Parametric</button>
+      <button id="mode-eq">Equation</button>
+      <button id="mode-free">Free draw (mouse)</button>
+    </div>
+
+    <div id="param-controls">
+      <div class="midi-bar">
+        <button id="midi-enable">Enable MIDI</button>
+        <div id="midi-status" class="pill"><span class="dot"></span><span id="midi-status-text">MIDI disabled</span></div>
+        <label class="switch-row" for="midi-debug" title="Logs raw incoming MIDI messages to the browser console.">
+          <input type="checkbox" id="midi-debug">
+          Debug log
+        </label>
+        <button id="midi-reset-defaults" title="Clears all learned MIDI mappings (device/channel/CC) back to defaults.">Reset MIDI mapping</button>
+      </div>
+      <div class="param-columns" id="param-columns"></div>
+      <div id="midi-msg" class="msg"></div>
+    </div>
+
+    <div id="eq-controls" style="display:none;">
+      <div class="field">
+        <label>f(i) — JavaScript expression</label>
+        <textarea id="equation" spellcheck="false"
+          title="Variables: i (index, 0..n-1), n (curve length), t (i/n, 0..1). Full Math available. Result is not clamped here — clamping happens at the output-encoding stage below.">128 + 100*Math.sin(2*Math.PI*i/64)</textarea>
+      </div>
+      <div class="btnrow">
+        <button id="eq-apply" class="primary">Evaluate</button>
+      </div>
+      <div id="eq-msg" class="msg"></div>
+    </div>
+
+    <div id="free-controls" style="display:none;">
+      <p class="msg" title="Click-drag directly on the graph above to hand-sculpt the curve.">Click-drag on the graph above to draw. Starts from the current curve.</p>
+      <div class="btnrow">
+        <button id="free-reset">Reset to parametric curve</button>
+        <button id="free-flat">Flatten (mid-range)</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>OUTPUT ENCODING</h2>
+    <div class="controls-grid">
+      <div class="field">
+        <label>Type</label>
+        <select id="enc-type" title="Data: raw numeric bytes. Gate Array: a sequence of CPC hardware color codes, picked from a gradient.">
+          <option value="data" selected>Data</option>
+          <option value="gateArray">Gate Array (colors)</option>
+        </select>
+      </div>
+      <div class="field" id="enc-size-field">
+        <label>Size</label>
+        <select id="enc-size" title="Number of bytes written per curve sample. 2 bytes = little-endian (Z80/CPC native).">
+          <option value="1" selected>1 byte</option>
+          <option value="2">2 bytes</option>
+        </select>
+      </div>
+      <div class="field" id="enc-gradient-field" style="display:none;">
+        <label>Gradient</label>
+        <select id="enc-gradient" title="An ordered sequence of CPC inks. Cyclic gradients wrap around; Luminance ramp runs from black to white."></select>
+      </div>
+      <div class="field">
+        <label id="enc-min-label">Output min</label>
+        <input type="number" id="enc-min" value="0" title="Lower bound of the output range, applied by the clamp mode below before masks.">
+      </div>
+      <div class="field">
+        <label id="enc-max-label">Output max</label>
+        <input type="number" id="enc-max" value="255" title="Upper bound of the output range. Does not change automatically with the encoding size — widen it yourself to use the full 16-bit range.">
+      </div>
+      <div class="field">
+        <label>Clamp mode</label>
+        <select id="enc-clamp" title="Saturate: values outside the range are clipped to the nearest bound. Modulo: values wrap around within the range.">
+          <option value="saturate">Saturate</option>
+          <option value="modulo" selected>Modulo</option>
+        </select>
+      </div>
+      <div class="field" id="enc-and-field">
+        <label>AND mask (hex, optional)</label>
+        <input type="text" id="enc-and" placeholder="e.g. #1E" spellcheck="false"
+          title="Applied after clamping, before OR. Leave empty for no masking.">
+      </div>
+      <div class="field" id="enc-or-field">
+        <label>OR mask (hex, optional)</label>
+        <input type="text" id="enc-or" placeholder="e.g. #40" spellcheck="false"
+          title="Applied last, after AND. Leave empty for no masking. Example: AND #1E then OR #40 forces even-ish values in the 64-95 range.">
+      </div>
+    </div>
+    <div class="hint" id="enc-hint">Pipeline: raw value → clamp (saturate/modulo) → AND → OR → encode ({1|2} bytes, little-endian).</div>
+  </section>
+
+  <section class="panel">
+    <h2>CONFIGURATION</h2>
+    <div class="btnrow">
+      <button id="cfg-export" class="secondary">Export configuration (JSON)</button>
+      <button id="cfg-import">Import configuration (JSON)</button>
+    </div>
+    <div id="cfg-msg" class="msg"></div>
+    <input type="file" id="cfg-import-file" accept="application/json" style="display:none;">
+  </section>
+
+  <section class="panel">
+    <h2>APPLY</h2>
+    <div class="btnrow">
+      <button id="btn-check">Check emulator connection</button>
+      <button id="btn-read">Read from emulator</button>
+      <button id="btn-apply" class="primary">Apply to RAM (live)</button>
+      <button id="btn-copy" class="secondary">Copy fantams source</button>
+    </div>
+    <div id="apply-msg" class="msg">Nothing sent yet.</div>
+    <textarea id="source-out" spellcheck="false" readonly></textarea>
+  </section>
+
+  <div class="footnote">
+    Writes directly to memory via <code>POST /api/ram</code> on
+    <code>http://127.0.0.1:6128</code> (AMSpiriT's REST API).
+    <br>⚠️ If this page is opened over <code>https://</code>, the browser usually blocks
+    the call to <code>http://127.0.0.1</code> (mixed content). Save this file and open it
+    locally (<code>file://…/curve_injector.html</code>) on the same machine as the emulator.
+    The preview / source-export part works regardless.
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var API = "http://127.0.0.1:6128";
+
+  var PARAM_KEYS = ['center','amp','period','phase','duty'];
+  var PARAM_LABELS = {waveform:'Waveform', center:'Center', amp:'Amplitude', period:'Period', phase:'Phase', duty:'Duty cycle'};
+  var PARAM_DEFAULTS = {
+    center: {value:128, min:0,   max:255, step:1},
+    amp:    {value:100, min:0,   max:127, step:0.1},
+    // Fractional step: at low period values, a step of 1 is a huge relative
+    // jump (e.g. 2 -> 3 is +50%) — 0.1 keeps adjustments smooth throughout.
+    period: {value:64,  min:2,   max:128, step:0.1},
+    phase:  {value:0,   min:0,   max:255, step:1},
+    duty:   {value:50,  min:1,   max:99,  step:1},
+  };
+
+  // ---- CPC hardware colors (see "Les couleurs du CPC.md") ----
+  // Index = BASIC ink number (0-26). sRGB for on-screen preview; Gate Array
+  // hardware code is what actually gets written to RAM/OUT on real hardware.
+  var INK_RGB = [
+    '#000000','#000080','#0000FF','#800000','#800080','#8000FF','#FF0000','#FF0080','#FF00FF',
+    '#008000','#008080','#0080FF','#808000','#808080','#8080FF','#FF8000','#FF8080','#FF80FF',
+    '#00FF00','#00FF80','#00FFFF','#80FF00','#80FF80','#80FFFF','#FFFF00','#FFFF80','#FFFFFF'
+  ];
+  var INK_TO_GA = [
+    0x54,0x44,0x55,0x5C,0x58,0x5D,0x4C,0x45,0x4D,
+    0x56,0x46,0x57,0x5E,0x40,0x5F,0x4E,0x47,0x4F,
+    0x52,0x42,0x53,0x5A,0x59,0x5B,0x4A,0x43,0x4B
+  ];
+  function inkLuminanceScore(ink){
+    return (ink % 3) * 1 + (Math.floor(ink / 3) % 3) * 3 + Math.floor(ink / 9) * 6;
+  }
+  var LUMINANCE_RAMP_INKS = [];
+  for (var _i = 0; _i < 27; _i++) LUMINANCE_RAMP_INKS.push(_i);
+  LUMINANCE_RAMP_INKS.sort(function(a,b){ return inkLuminanceScore(a) - inkLuminanceScore(b); });
+
+  // Gradients: ordered ink sequences a curve can be mapped onto instead of
+  // raw numeric bytes. "cyclic" ones wrap (last value flows back to first);
+  // the luminance ramp and the single-hue ramps are one-way black-to-white
+  // sweeps, not cycles.
+  //
+  // Single-hue ramps: black -> dark -> bright -> pastel -> white, all taken
+  // from the document's own dark/saturated/pastel rings (§5.4) — no color
+  // invented here. "Drift" variants exist only for the 3 primaries (Red,
+  // Green, Blue): a primary has two directions available to add the next
+  // channel toward white (e.g. Red can gain Green -> orange/yellow, or Blue
+  // -> purple/magenta), so a distinct, still-monotonic-luminance path
+  // through a neighboring hue is meaningful. Secondaries (Magenta, Cyan,
+  // Yellow) have only one channel left to raise to reach white, so their
+  // "drift" would be identical to their mono ramp — not offered separately.
+  var GRADIENTS = {
+    saturated: {label:'Saturated hues',  cyclic:true,  inks:[2,5,8,7,6,15,24,21,18,19,20,11]},
+    pastel:    {label:'Pastel hues',     cyclic:true,  inks:[14,17,16,25,22,23]},
+    dark:      {label:'Dark hues',       cyclic:true,  inks:[1,4,3,12,9,10]},
+    luminance: {label:'Luminance ramp',  cyclic:false, inks:LUMINANCE_RAMP_INKS},
+    spectrum:  {label:'Full spectrum',   cyclic:true,  inks:[0,1,4,3,12,9,10,2,5,8,7,6,15,24,21,18,19,20,11,14,17,16,25,22,23,26]},
+
+    hueRed:     {label:'Red',     cyclic:false, inks:[0,3,6,16,26]},
+    hueGreen:   {label:'Green',   cyclic:false, inks:[0,9,18,22,26]},
+    hueBlue:    {label:'Blue',    cyclic:false, inks:[0,1,2,14,26]},
+    hueCyan:    {label:'Cyan',    cyclic:false, inks:[0,10,20,23,26]},
+    hueMagenta: {label:'Magenta', cyclic:false, inks:[0,4,8,17,26]},
+    hueYellow:  {label:'Yellow',  cyclic:false, inks:[0,12,24,25,26]},
+
+    hueRedDrift:   {label:'Red → orange → yellow',  cyclic:false, inks:[0,3,6,15,24,26]},
+    hueGreenDrift: {label:'Green → sea green → cyan', cyclic:false, inks:[0,9,18,19,20,26]},
+    hueBlueDrift:  {label:'Blue → violet → magenta', cyclic:false, inks:[0,1,2,5,8,26]},
+
+    hueCycle: {label:'Hue cycle (all 6)', cyclic:true,
+      inks:[0, 1,2,14, 4,8,17, 3,6,16, 12,24,25, 9,18,22, 10,20,23, 26]},
+  };
+  var GRADIENT_GROUPS = [
+    {label:'Rings',     keys:['saturated','pastel','dark','luminance','spectrum']},
+    {label:'Hue ramp',  keys:['hueRed','hueGreen','hueBlue','hueCyan','hueMagenta','hueYellow']},
+    {label:'Hue drift', keys:['hueRedDrift','hueGreenDrift','hueBlueDrift']},
+    {label:'Combined',  keys:['hueCycle']},
+  ];
+
+  function currentGradient(){
+    return GRADIENTS[state.encoding.gradientKey] || GRADIENTS.saturated;
+  }
+
+  var state = {
+    target: {addr:'0xC000', length:256, autoInject:false, autoInjectDebounceMs:120},
+    mode: 'param', // 'param' | 'eq' | 'free'
+    waveform: 'sine',
+    params: JSON.parse(JSON.stringify(PARAM_DEFAULTS)),
+    equation: "128 + 100*Math.sin(2*Math.PI*i/64)",
+    encoding: {
+      type: 'data', // 'data' | 'gateArray'
+      sizeBytes: 1, outMin: 0, outMax: 255, clampMode: 'modulo', andMask: null, orMask: null,
+      gradientKey: 'saturated',
+    },
+  };
+
+  var curve = new Array(state.target.length).fill(128); // raw values, not yet encoded
+  var autoTimer = null;
+
+  function clamp(v, lo, hi){ return Math.max(lo, Math.min(hi, v)); }
+
+  function curveLength(){ return curve.length; }
+
+  function resizeCurve(newLen){
+    var old = curve;
+    curve = new Array(newLen);
+    for (var i=0;i<newLen;i++) curve[i] = (i < old.length) ? old[i] : 0;
+  }
+
+  // ---- address parsing: decimal / #hex / 0xhex ----
+  function parseAddr(raw){
+    raw = String(raw).trim();
+    var v;
+    if (/^#[0-9a-f]+$/i.test(raw)) v = parseInt(raw.slice(1), 16);
+    else if (/^0x[0-9a-f]+$/i.test(raw)) v = parseInt(raw.slice(2), 16);
+    else if (/^[0-9]+$/.test(raw)) v = parseInt(raw, 10);
+    else return null;
+    if (isNaN(v) || v < 0 || v > 0xFFFF) return null;
+    return v;
+  }
+
+  // ---- optional hex mask parsing (returns null if blank) ----
+  function parseMask(raw){
+    raw = String(raw||'').trim();
+    if (raw === '') return null;
+    raw = raw.replace(/^0x/i,'').replace(/^#/,'');
+    var v = parseInt(raw, 16);
+    if (isNaN(v)) return null;
+    return v;
+  }
+
+  var els = {
+    status: document.getElementById('status'),
+    statusText: document.getElementById('status-text'),
+    addr: document.getElementById('addr'),
+    length: document.getElementById('length'),
+    autoinject: document.getElementById('autoinject'),
+    autoinjectDebounce: document.getElementById('autoinject-debounce'),
+    canvas: document.getElementById('graph'),
+    hoverI: document.getElementById('hover-i'),
+    hoverV: document.getElementById('hover-v'),
+    paramColumns: document.getElementById('param-columns'),
+    modeParam: document.getElementById('mode-param'),
+    modeEq: document.getElementById('mode-eq'),
+    modeFree: document.getElementById('mode-free'),
+    paramControls: document.getElementById('param-controls'),
+    eqControls: document.getElementById('eq-controls'),
+    freeControls: document.getElementById('free-controls'),
+    equation: document.getElementById('equation'),
+    eqApply: document.getElementById('eq-apply'),
+    eqMsg: document.getElementById('eq-msg'),
+    freeReset: document.getElementById('free-reset'),
+    freeFlat: document.getElementById('free-flat'),
+    encType: document.getElementById('enc-type'),
+    encSizeField: document.getElementById('enc-size-field'),
+    encSize: document.getElementById('enc-size'),
+    encGradientField: document.getElementById('enc-gradient-field'),
+    encGradient: document.getElementById('enc-gradient'),
+    encMinLabel: document.getElementById('enc-min-label'),
+    encMaxLabel: document.getElementById('enc-max-label'),
+    encMin: document.getElementById('enc-min'),
+    encMax: document.getElementById('enc-max'),
+    encClamp: document.getElementById('enc-clamp'),
+    encAndField: document.getElementById('enc-and-field'),
+    encAnd: document.getElementById('enc-and'),
+    encOrField: document.getElementById('enc-or-field'),
+    encOr: document.getElementById('enc-or'),
+    encHint: document.getElementById('enc-hint'),
+    outputPreview: document.getElementById('output-preview'),
+    outputPreviewCaption: document.getElementById('output-preview-caption'),
+    cfgExport: document.getElementById('cfg-export'),
+    cfgImport: document.getElementById('cfg-import'),
+    cfgImportFile: document.getElementById('cfg-import-file'),
+    cfgMsg: document.getElementById('cfg-msg'),
+    btnCheck: document.getElementById('btn-check'),
+    btnRead: document.getElementById('btn-read'),
+    btnApply: document.getElementById('btn-apply'),
+    btnCopy: document.getElementById('btn-copy'),
+    applyMsg: document.getElementById('apply-msg'),
+    sourceOut: document.getElementById('source-out'),
+    midiEnable: document.getElementById('midi-enable'),
+    midiResetDefaults: document.getElementById('midi-reset-defaults'),
+    midiStatus: document.getElementById('midi-status'),
+    midiStatusText: document.getElementById('midi-status-text'),
+    midiMsg: document.getElementById('midi-msg'),
+    midiDebug: document.getElementById('midi-debug'),
+  };
+
+  // =====================================================================
+  // Parametric column UI (waveform + one column per numeric parameter)
+  // =====================================================================
+  var WAVEFORMS = [
+    ['sine','Sine'], ['triangle','Triangle'], ['sawtooth','Sawtooth'],
+    ['square','Square'], ['pulse','Pulse (duty cycle)'], ['noise','Random noise'],
+    ['interleave','Interleaved ramp']
+  ];
+
+  // Parameters that can be driven by a MIDI CC: the numeric ones, plus the
+  // categorical waveform selector (mapped by slicing 0-127 into as many
+  // equal slices as there are waveforms).
+  var MIDI_KEYS = ['waveform'].concat(PARAM_KEYS);
+
+  function buildParamColumns(){
+    var html = '';
+    html += '<div class="param-col" id="col-waveform" data-param="waveform">' +
+      '<h3>Waveform</h3>' +
+      '<select id="waveform">' +
+        WAVEFORMS.map(function(w){ return '<option value="'+w[0]+'"'+(w[0]===state.waveform?' selected':'')+'>'+w[1]+'</option>'; }).join('') +
+      '</select>' +
+      '<div class="midi-block">' +
+        '<div class="midi-readout" id="midi-readout-waveform">Ch – / CC –</div>' +
+        '<button class="learn" data-param="waveform">Learn</button>' +
+      '</div>' +
+    '</div>';
+
+    PARAM_KEYS.forEach(function(key){
+      var p = state.params[key];
+      html += '<div class="param-col" id="col-'+key+'" data-param="'+key+'">' +
+        '<h3>'+PARAM_LABELS[key]+'</h3>' +
+        '<div class="value-row">' +
+          '<input type="range" id="'+key+'" min="'+p.min+'" max="'+p.max+'" step="'+(p.step||1)+'" value="'+p.value+'">' +
+          '<input type="number" class="val-num" id="v-'+key+'" min="'+p.min+'" max="'+p.max+'" step="'+(p.step||1)+'" value="'+p.value+'">' +
+        '</div>' +
+        '<div class="range-row">' +
+          '<div><label>Min</label><input type="number" id="'+key+'-min" value="'+p.min+'"></div>' +
+          '<div><label>Max</label><input type="number" id="'+key+'-max" value="'+p.max+'"></div>' +
+        '</div>' +
+        '<div class="midi-block">' +
+          '<div class="midi-readout" id="midi-readout-'+key+'">Ch – / CC –</div>' +
+          '<button class="learn" data-param="'+key+'">Learn</button>' +
+        '</div>' +
+      '</div>';
+    });
+    els.paramColumns.innerHTML = html;
+
+    // re-bind element refs that live inside the dynamically rendered columns
+    PARAM_KEYS.forEach(function(key){
+      els[key] = document.getElementById(key);
+      els[key+'Val'] = document.getElementById('v-'+key);
+      els[key+'Min'] = document.getElementById(key+'-min');
+      els[key+'Max'] = document.getElementById(key+'-max');
+    });
+    MIDI_KEYS.forEach(function(key){
+      els['midiReadout'+key] = document.getElementById('midi-readout-'+key);
+    });
+    els.waveform = document.getElementById('waveform');
+    els.dutyCol = document.getElementById('col-duty');
+
+    wireParamColumnEvents();
+    updateDutyVisibility();
+    renderMidiReadouts();
+  }
+
+  function updateDutyVisibility(){
+    els.dutyCol.style.display = (els.waveform.value === 'pulse') ? 'flex' : 'none';
+  }
+
+  // Sets a parameter's value (clamped to its current min/max), keeping the
+  // slider, the precise-entry number field and the state object in sync —
+  // used by slider drags, direct number entry and incoming MIDI alike.
+  // Snaps to the nearest multiple of a parameter's step (1 for whole-number
+  // parameters, a fraction for ones like Period where a step of 1 would be
+  // too coarse at low values). toFixed() avoids float noise like 64.30000000000001.
+  function snapToStep(v, step){
+    step = step || 1;
+    var snapped = Math.round(v / step) * step;
+    var decimals = (String(step).split('.')[1] || '').length;
+    return parseFloat(snapped.toFixed(decimals));
+  }
+
+  function setParamValue(key, v){
+    var p = state.params[key];
+    v = clamp(snapToStep(v, p.step), p.min, p.max);
+    p.value = v;
+    els[key].value = v;
+    els[key+'Val'].value = v;
+    if (state.mode === 'param') refreshAll();
+  }
+
+  function wireParamColumnEvents(){
+    els.waveform.addEventListener('change', function(){
+      state.waveform = els.waveform.value;
+      updateDutyVisibility();
+      if (state.mode === 'param') refreshAll();
+    });
+
+    PARAM_KEYS.forEach(function(key){
+      els[key].addEventListener('input', function(){ setParamValue(key, +els[key].value); });
+      els[key+'Val'].addEventListener('change', function(){
+        var v = parseFloat(els[key+'Val'].value);
+        if (isNaN(v)) v = state.params[key].value;
+        setParamValue(key, v);
+      });
+      els[key+'Min'].addEventListener('change', function(){
+        var v = parseFloat(els[key+'Min'].value);
+        if (isNaN(v)) v = state.params[key].min;
+        state.params[key].min = v;
+        els[key].min = v;
+        els[key+'Val'].min = v;
+        if (state.params[key].value < v) setParamValue(key, v);
+      });
+      els[key+'Max'].addEventListener('change', function(){
+        var v = parseFloat(els[key+'Max'].value);
+        if (isNaN(v)) v = state.params[key].max;
+        state.params[key].max = v;
+        els[key].max = v;
+        els[key+'Val'].max = v;
+        if (state.params[key].value > v) setParamValue(key, v);
+      });
+    });
+
+    if (!els.paramColumns.dataset.wired){
+      els.paramColumns.dataset.wired = '1';
+      els.paramColumns.addEventListener('click', function(evt){
+        var t = evt.target;
+        if (t.classList.contains('learn')){
+          startLearn(t.getAttribute('data-param'));
+        }
+      });
+    }
+  }
+
+  // =====================================================================
+  // Curve generation
+  // =====================================================================
+  function genInterleave(i){
+    return ((i % 4) * 0x30 + Math.floor(i / 4));
+  }
+
+  function regenerateParametric(){
+    var n = curveLength();
+    var wf = state.waveform;
+    var center = state.params.center.value;
+    var amp = state.params.amp.value;
+    var period = state.params.period.value;
+    var phase = state.params.phase.value;
+    var duty = state.params.duty.value / 100;
+
+    if (wf === 'interleave'){
+      for (var i=0;i<n;i++) curve[i] = genInterleave(i);
+      return;
+    }
+    if (wf === 'noise'){
+      for (var i=0;i<n;i++) curve[i] = center + amp*(Math.random()*2-1);
+      return;
+    }
+    for (var i=0;i<n;i++){
+      var t = ((i + phase) % period) / period; // 0..1
+      var s;
+      if (wf === 'sine'){
+        s = Math.sin(2*Math.PI*t);
+      } else if (wf === 'triangle'){
+        s = 1 - 4*Math.abs(Math.round(t - 0.25) - (t - 0.25));
+      } else if (wf === 'sawtooth'){
+        s = 2*t - 1;
+      } else if (wf === 'square'){
+        s = t < 0.5 ? 1 : -1;
+      } else if (wf === 'pulse'){
+        s = t < duty ? 1 : -1;
+      } else {
+        s = 0;
+      }
+      curve[i] = center + amp*s;
+    }
+  }
+
+  function regenerateEquation(){
+    var n = curveLength();
+    var expr = state.equation;
+    var fn;
+    try{
+      fn = new Function('i','n','t', 'return (' + expr + ');');
+    } catch(e){
+      els.eqMsg.className = 'msg err';
+      els.eqMsg.textContent = 'Syntax error: ' + e.message;
+      return false;
+    }
+    try{
+      for (var i=0;i<n;i++){
+        var v = fn(i, n, i/n);
+        curve[i] = (typeof v === 'number' && isFinite(v)) ? v : 0;
+      }
+    } catch(e){
+      els.eqMsg.className = 'msg err';
+      els.eqMsg.textContent = 'Evaluation error: ' + e.message;
+      return false;
+    }
+    els.eqMsg.className = 'msg ok';
+    els.eqMsg.textContent = 'Evaluated over ' + n + ' points.';
+    return true;
+  }
+
+  // =====================================================================
+  // Output encoding pipeline: raw value -> clamp -> AND -> OR -> bytes
+  // =====================================================================
+  function encodeValue(raw){
+    var enc = state.encoding;
+    var lo = enc.outMin, hi = enc.outMax;
+    var v;
+    if (hi <= lo){
+      v = lo;
+    } else if (enc.clampMode === 'modulo'){
+      var range = hi - lo + 1;
+      v = lo + (((Math.round(raw) - lo) % range) + range) % range;
+    } else {
+      v = clamp(raw, lo, hi);
+    }
+    v = Math.round(v);
+    if (enc.andMask !== null) v = v & enc.andMask;
+    if (enc.orMask !== null) v = v | enc.orMask;
+    var maxForSize = (enc.sizeBytes === 2) ? 0xFFFF : 0xFF;
+    return clamp(v, 0, maxForSize);
+  }
+
+  // Position of a raw curve value within the current gradient: bounded by
+  // the same clamp/modulo logic as the Data pipeline, then rounded to the
+  // nearest ink (two hardware colors can't blend into a third).
+  function gateArrayIndexFor(raw){
+    var g = currentGradient();
+    var enc = state.encoding;
+    var lo = enc.outMin, hi = enc.outMax;
+    if (hi <= lo) hi = lo + 1;
+    var v;
+    if (enc.clampMode === 'modulo'){
+      var range = hi - lo + 1;
+      v = lo + (((Math.round(raw) - lo) % range) + range) % range;
+    } else {
+      v = clamp(raw, lo, hi);
+    }
+    return clamp(Math.round(v), 0, g.inks.length - 1);
+  }
+
+  function encodeValueGateArray(raw){
+    var g = currentGradient();
+    var ink = g.inks[gateArrayIndexFor(raw)];
+    return INK_TO_GA[ink];
+  }
+
+  function encodedBytes(){
+    var out = [];
+    if (state.encoding.type === 'gateArray'){
+      for (var i=0;i<curve.length;i++) out.push(encodeValueGateArray(curve[i]));
+      return out;
+    }
+    var size = state.encoding.sizeBytes;
+    for (var i=0;i<curve.length;i++){
+      var v = encodeValue(curve[i]);
+      if (size === 2){
+        out.push(v & 0xFF, (v >> 8) & 0xFF); // little-endian
+      } else {
+        out.push(v & 0xFF);
+      }
+    }
+    return out;
+  }
+
+  function toHexString(){
+    var bytes = encodedBytes();
+    var s = '';
+    for (var i=0;i<bytes.length;i++) s += bytes[i].toString(16).toUpperCase().padStart(2,'0');
+    return s;
+  }
+
+  // =====================================================================
+  // Graph
+  // =====================================================================
+  // Fixed 0-255 domain for the raw curve preview and freehand drawing —
+  // deliberately independent of the encoding panel (Data or Gate Array,
+  // whatever range it happens to be set to), so switching encoding never
+  // changes how this graph looks or moves the canvas under the mouse
+  // mid-drawing. It must also stay FIXED rather than auto-fit to the
+  // curve's own min/max: auto-fitting would rescale a sine wave to always
+  // fill the full height regardless of amplitude, and re-center it
+  // regardless of the center parameter — silently hiding the very changes
+  // this preview exists to show.
+  var CURVE_VIEW_RANGE = [0, 255];
+
+  function drawGraph(){
+    var canvas = els.canvas;
+    var ctx = canvas.getContext('2d');
+    var w = canvas.width, h = canvas.height;
+    var n = curveLength();
+    var styles = getComputedStyle(document.documentElement);
+    var col = function(name){ return styles.getPropertyValue(name).trim(); };
+    var lo = CURVE_VIEW_RANGE[0], hi = CURVE_VIEW_RANGE[1];
+
+    ctx.clearRect(0,0,w,h);
+
+    ctx.strokeStyle = col('--grid');
+    ctx.lineWidth = 1;
+    for (var gx=0; gx<=8; gx++){
+      var x = Math.round(gx/8*w) + .5;
+      ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,h); ctx.stroke();
+    }
+    for (var gy=0; gy<=4; gy++){
+      var y = Math.round(gy/4*h) + .5;
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
+    }
+
+    ctx.strokeStyle = col('--accent');
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (var i=0;i<n;i++){
+      var xx = i/(n-1)*w;
+      var yy = clamp(h - ((curve[i]-lo)/(hi-lo))*h, -4, h+4);
+      if (i===0) ctx.moveTo(xx,yy); else ctx.lineTo(xx,yy);
+    }
+    ctx.stroke();
+
+    ctx.lineTo(w,h); ctx.lineTo(0,h); ctx.closePath();
+    ctx.fillStyle = col('--accent') + '22';
+    ctx.fill();
+  }
+
+  // Post-pipeline preview: exactly what will be written to RAM — an encoded
+  // numeric curve for Data, or a strip of the resolved colors for Gate Array.
+  function drawOutputPreview(){
+    var canvas = els.outputPreview;
+    var ctx = canvas.getContext('2d');
+    var w = canvas.width, h = canvas.height;
+    var n = curveLength();
+    var styles = getComputedStyle(document.documentElement);
+    var col = function(name){ return styles.getPropertyValue(name).trim(); };
+    ctx.clearRect(0,0,w,h);
+
+    if (state.encoding.type === 'gateArray'){
+      var g = currentGradient();
+      for (var i=0;i<n;i++){
+        var ink = g.inks[gateArrayIndexFor(curve[i])];
+        var x0 = Math.floor(i/n*w), x1 = Math.ceil((i+1)/n*w);
+        ctx.fillStyle = INK_RGB[ink];
+        ctx.fillRect(x0, 0, Math.max(1, x1-x0), h);
+      }
+      els.outputPreviewCaption.textContent = g.label + ' — ' + g.inks.length + ' color(s)' + (g.cyclic ? ', cyclic' : '');
+      return;
+    }
+
+    var maxForSize = (state.encoding.sizeBytes === 2) ? 0xFFFF : 0xFF;
+    ctx.strokeStyle = col('--grid');
+    ctx.lineWidth = 1;
+    for (var gy=0; gy<=4; gy++){
+      var y = Math.round(gy/4*h) + .5;
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke();
+    }
+    ctx.strokeStyle = col('--accent-2');
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (var i=0;i<n;i++){
+      var xx = i/(n-1)*w;
+      var v = encodeValue(curve[i]);
+      var yy = h - (v/maxForSize)*h;
+      if (i===0) ctx.moveTo(xx,yy); else ctx.lineTo(xx,yy);
+    }
+    ctx.stroke();
+    els.outputPreviewCaption.textContent = state.encoding.sizeBytes + ' byte(s) per sample, 0–' + maxForSize + '.';
+  }
+
+  function refreshAll(regenerate){
+    if (regenerate !== false){
+      if (state.mode === 'param') regenerateParametric();
+      else if (state.mode === 'eq') regenerateEquation();
+    }
+    drawGraph();
+    drawOutputPreview();
+    updateSource();
+    maybeAutoInject();
+  }
+
+  function updateSource(){
+    var addr = parseAddr(els.addr.value);
+    var bytes = encodedBytes();
+    var n = bytes.length;
+    var lines = [];
+    lines.push('        org #' + (addr===null ? '????' : addr.toString(16).toUpperCase().padStart(4,'0')));
+    lines.push('curve_table:');
+    for (var off=0; off<n; off+=16){
+      var row = [];
+      var end = Math.min(off+16, n);
+      for (var j=off;j<end;j++){
+        row.push('#' + bytes[j].toString(16).toUpperCase().padStart(2,'0'));
+      }
+      lines.push('        db   ' + row.join(','));
+    }
+    els.sourceOut.value = lines.join('\n');
+  }
+
+  function autoInjectDebounceMs(){
+    var v = parseInt(els.autoinjectDebounce.value, 10);
+    if (isNaN(v) || v < 0) v = 0;
+    return v;
+  }
+
+  function maybeAutoInject(){
+    if (!els.autoinject.checked) return;
+    if (parseAddr(els.addr.value) === null) return;
+    clearTimeout(autoTimer);
+    autoTimer = setTimeout(applyToEmulator, autoInjectDebounceMs());
+  }
+
+  // ---- target address / length ----
+  els.addr.addEventListener('input', function(){ updateSource(); });
+  els.addr.addEventListener('change', function(){ updateSource(); maybeAutoInject(); });
+  els.addr.addEventListener('keydown', function(evt){
+    if (evt.key === 'Enter'){ els.addr.blur(); }
+  });
+
+  function commitLength(){
+    var n = parseInt(els.length.value, 10);
+    if (isNaN(n) || n < 2) n = 2;
+    if (n > 65536) n = 65536;
+    els.length.value = n;
+    resizeCurve(n);
+    state.target.length = n;
+    if (state.params.period.max < n){ /* leave as-is, period is independently editable now */ }
+    refreshAll();
+  }
+  els.length.addEventListener('change', commitLength);
+  els.length.addEventListener('keydown', function(evt){
+    if (evt.key === 'Enter'){ els.length.blur(); }
+  });
+  els.autoinject.addEventListener('change', function(){
+    if (els.autoinject.checked) maybeAutoInject();
+  });
+
+  // ---- encoding wiring ----
+  function populateGradientSelect(){
+    els.encGradient.innerHTML = GRADIENT_GROUPS.map(function(group){
+      var options = group.keys.map(function(key){
+        var g = GRADIENTS[key];
+        return '<option value="'+key+'">'+g.label+' ('+g.inks.length+')</option>';
+      }).join('');
+      return '<optgroup label="'+group.label+'">'+options+'</optgroup>';
+    }).join('');
+  }
+
+  // Resets the output range to the chosen gradient's full index span. Clamp
+  // mode is deliberately left untouched — it defaults to Modulo and stays
+  // whatever the user last set, regardless of which gradient is selected.
+  function applyGradientDefaults(key){
+    var g = GRADIENTS[key];
+    els.encMin.value = 0;
+    els.encMax.value = g.inks.length - 1;
+  }
+
+  function updateEncodingVisibility(){
+    var isGA = els.encType.value === 'gateArray';
+    els.encSizeField.style.display = isGA ? 'none' : 'flex';
+    els.encGradientField.style.display = isGA ? 'flex' : 'none';
+    els.encAndField.style.display = isGA ? 'none' : 'flex';
+    els.encOrField.style.display = isGA ? 'none' : 'flex';
+    els.encMinLabel.textContent = isGA ? 'Gradient position min' : 'Output min';
+    els.encMaxLabel.textContent = isGA ? 'Gradient position max' : 'Output max';
+    els.encHint.textContent = isGA
+      ? 'Pipeline: raw value → clamp (saturate/modulo) on gradient position → nearest ink → Gate Array code.'
+      : 'Pipeline: raw value → clamp (saturate/modulo) → AND → OR → encode ({1|2} bytes, little-endian).';
+  }
+
+  function readEncodingFromUI(){
+    state.encoding.type = (els.encType.value === 'gateArray') ? 'gateArray' : 'data';
+    state.encoding.sizeBytes = (+els.encSize.value === 2) ? 2 : 1;
+    state.encoding.gradientKey = els.encGradient.value || 'saturated';
+    var mn = parseFloat(els.encMin.value); if (isNaN(mn)) mn = 0;
+    var mx = parseFloat(els.encMax.value); if (isNaN(mx)) mx = 255;
+    state.encoding.outMin = mn;
+    state.encoding.outMax = mx;
+    state.encoding.clampMode = (els.encClamp.value === 'modulo') ? 'modulo' : 'saturate';
+    state.encoding.andMask = parseMask(els.encAnd.value);
+    state.encoding.orMask = parseMask(els.encOr.value);
+    updateEncodingVisibility();
+    refreshAll(false);
+  }
+
+  els.encType.addEventListener('change', function(){
+    if (els.encType.value === 'gateArray') applyGradientDefaults(els.encGradient.value || 'saturated');
+    readEncodingFromUI();
+  });
+  els.encGradient.addEventListener('change', function(){
+    applyGradientDefaults(els.encGradient.value);
+    readEncodingFromUI();
+  });
+  [els.encSize, els.encMin, els.encMax, els.encClamp, els.encAnd, els.encOr].forEach(function(el){
+    el.addEventListener('change', readEncodingFromUI);
+  });
+
+  // ---- equation wiring ----
+  els.equation.addEventListener('change', function(){ state.equation = els.equation.value; });
+  els.eqApply.addEventListener('click', function(){ state.equation = els.equation.value; refreshAll(); });
+
+  // ---- mode toggle ----
+  function setMode(m){
+    state.mode = m;
+    els.modeParam.className = m==='param' ? 'primary' : '';
+    els.modeEq.className = m==='eq' ? 'primary' : '';
+    els.modeFree.className = m==='free' ? 'primary' : '';
+    els.paramControls.style.display = m==='param' ? 'block' : 'none';
+    els.eqControls.style.display = m==='eq' ? 'block' : 'none';
+    els.freeControls.style.display = m==='free' ? 'block' : 'none';
+    if (m!=='free') refreshAll();
+  }
+  els.modeParam.addEventListener('click', function(){ setMode('param'); });
+  els.modeEq.addEventListener('click', function(){ setMode('eq'); });
+  els.modeFree.addEventListener('click', function(){ setMode('free'); });
+  els.freeReset.addEventListener('click', function(){ regenerateParametric(); drawGraph(); updateSource(); maybeAutoInject(); });
+  els.freeFlat.addEventListener('click', function(){
+    var mid = (CURVE_VIEW_RANGE[0]+CURVE_VIEW_RANGE[1])/2;
+    curve.fill(mid); drawGraph(); updateSource(); maybeAutoInject();
+  });
+
+  // ---- freehand drawing ----
+  var drawing = false;
+  function pointToIndexValue(evt){
+    var rect = els.canvas.getBoundingClientRect();
+    var n = curveLength();
+    var lo = CURVE_VIEW_RANGE[0], hi = CURVE_VIEW_RANGE[1];
+    var cx = (evt.touches ? evt.touches[0].clientX : evt.clientX) - rect.left;
+    var cy = (evt.touches ? evt.touches[0].clientY : evt.clientY) - rect.top;
+    var i = Math.max(0, Math.min(n-1, Math.round(cx/rect.width*(n-1))));
+    var v = clamp(Math.round(lo + (1 - cy/rect.height)*(hi-lo)), lo, hi);
+    return [i, v];
+  }
+  function paintAt(evt){
+    var iv = pointToIndexValue(evt);
+    curve[iv[0]] = iv[1];
+    els.hoverI.textContent = iv[0];
+    els.hoverV.textContent = iv[1];
+    drawGraph();
+    if (els.autoinject.checked){
+      clearTimeout(autoTimer);
+      autoTimer = setTimeout(function(){ updateSource(); applyToEmulator(); }, autoInjectDebounceMs());
+    }
+  }
+  els.canvas.addEventListener('pointerdown', function(evt){
+    if (state.mode !== 'free') { hoverOnly(evt); return; }
+    drawing = true; paintAt(evt); updateSource();
+  });
+  window.addEventListener('pointerup', function(){
+    if (drawing) { updateSource(); maybeAutoInject(); }
+    drawing = false;
+  });
+  els.canvas.addEventListener('pointermove', function(evt){
+    if (drawing && state.mode === 'free'){ paintAt(evt); return; }
+    hoverOnly(evt);
+  });
+  function hoverOnly(evt){
+    var rect = els.canvas.getBoundingClientRect();
+    var n = curveLength();
+    var cx = evt.clientX - rect.left;
+    var i = Math.max(0, Math.min(n-1, Math.round(cx/rect.width*(n-1))));
+    els.hoverI.textContent = i;
+    els.hoverV.textContent = Math.round(curve[i]);
+  }
+
+  // =====================================================================
+  // Emulator connection
+  // =====================================================================
+  function setStatus(state_, text){
+    els.status.className = 'pill ' + state_;
+    els.statusText.textContent = text;
+  }
+
+  function checkConnection(){
+    setStatus('pending', 'checking…');
+    fetch(API + '/api/ping', {mode:'cors'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        setStatus('ok', 'AMSpiriT connected (core ' + (d.core || '?') + ')');
+      })
+      .catch(function(err){
+        setStatus('bad', 'unreachable (mixed content? open the file locally)');
+      });
+  }
+  els.btnCheck.addEventListener('click', checkConnection);
+
+  els.btnRead.addEventListener('click', function(){
+    var addr = parseAddr(els.addr.value);
+    if (addr === null){
+      els.applyMsg.className = 'msg err';
+      els.applyMsg.textContent = 'Invalid address.';
+      return;
+    }
+    var n = curveLength();
+    var size = state.encoding.sizeBytes;
+    els.applyMsg.className = 'msg';
+    els.applyMsg.textContent = 'Reading…';
+    fetch(API + '/api/ram?addr=' + addr + '&len=' + (n*size) + '&view=cpu', {mode:'cors'})
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        var hex = d.hex;
+        for (var i=0;i<n;i++){
+          if (size === 2){
+            var lo = parseInt(hex.substr(i*4,2), 16);
+            var hi = parseInt(hex.substr(i*4+2,2), 16);
+            curve[i] = lo + (hi<<8);
+          } else {
+            curve[i] = parseInt(hex.substr(i*2,2), 16);
+          }
+        }
+        setMode('free'); // reading live data is inherently a custom curve
+        drawGraph(); updateSource();
+        els.applyMsg.className = 'msg ok';
+        els.applyMsg.textContent = 'Read ' + n + ' sample(s) from the emulator and loaded into the editor.';
+      })
+      .catch(function(err){
+        els.applyMsg.className = 'msg err';
+        els.applyMsg.textContent = 'Read failed: ' + err + ' — page served over https? Open the file locally.';
+      });
+  });
+
+  function applyToEmulator(){
+    var addr = parseAddr(els.addr.value);
+    if (addr === null){
+      els.applyMsg.className = 'msg err';
+      els.applyMsg.textContent = 'Invalid address.';
+      return;
+    }
+    els.applyMsg.className = 'msg';
+    els.applyMsg.textContent = 'Sending…';
+    fetch(API + '/api/ram', {
+      method: 'POST',
+      mode: 'cors',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({addr: addr, data: toHexString()})
+    })
+      .then(function(r){ return r.json(); })
+      .then(function(d){
+        els.applyMsg.className = 'msg ok';
+        els.applyMsg.textContent = 'Applied (seq ' + d.seq + ', ' + encodedBytes().length + ' byte(s) at #' + addr.toString(16).toUpperCase() + ').';
+      })
+      .catch(function(err){
+        els.applyMsg.className = 'msg err';
+        els.applyMsg.textContent = 'Send failed: ' + err + ' — page served over https? Open the file locally.';
+      });
+  }
+  els.btnApply.addEventListener('click', applyToEmulator);
+
+  els.btnCopy.addEventListener('click', function(){
+    updateSource();
+    els.sourceOut.select();
+    var done = function(){
+      els.applyMsg.className = 'msg ok';
+      els.applyMsg.textContent = 'Source copied to clipboard.';
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(els.sourceOut.value).then(done).catch(function(){
+        document.execCommand('copy'); done();
+      });
+    } else {
+      document.execCommand('copy'); done();
+    }
+  });
+
+  // =====================================================================
+  // MIDI control (parametric mode only)
+  // Controller "type" (absolute/relative/momentary) and "invert" have no UI
+  // control for now; they are preserved in the exported/imported JSON and
+  // keep whatever value learning last produced (default: absolute).
+  // =====================================================================
+  var MIDI_STORAGE_KEY = 'curve_injector_midi_mapping_v1';
+
+  function defaultMidiMapping(){
+    return {
+      waveform: {device:null, deviceName:null, channel:null, cc:19, type:'absolute', step:1, invert:false, toggleLow:0, toggleHigh:WAVEFORMS.length-1},
+      center: {device:null, deviceName:null, channel:null, cc:20, type:'absolute', step:1, invert:false, toggleLow:0, toggleHigh:255},
+      amp:    {device:null, deviceName:null, channel:null, cc:21, type:'absolute', step:1, invert:false, toggleLow:0, toggleHigh:127},
+      period: {device:null, deviceName:null, channel:null, cc:22, type:'absolute', step:1, invert:false, toggleLow:2, toggleHigh:state.params.period.max},
+      phase:  {device:null, deviceName:null, channel:null, cc:23, type:'absolute', step:1, invert:false, toggleLow:0, toggleHigh:255},
+      duty:   {device:null, deviceName:null, channel:null, cc:24, type:'absolute', step:1, invert:false, toggleLow:1, toggleHigh:99},
+    };
+  }
+
+  function mergeWithDefaults(parsed){
+    var merged = defaultMidiMapping();
+    if (parsed && typeof parsed === 'object'){
+      MIDI_KEYS.forEach(function(param){
+        if (parsed[param] && typeof parsed[param] === 'object'){
+          for (var k in merged[param]){
+            if (parsed[param][k] !== undefined) merged[param][k] = parsed[param][k];
+          }
+        }
+      });
+    }
+    return merged;
+  }
+
+  function loadMidiMapping(){
+    try{
+      var raw = localStorage.getItem(MIDI_STORAGE_KEY);
+      if (!raw) return defaultMidiMapping();
+      return mergeWithDefaults(JSON.parse(raw));
+    } catch(e){ return defaultMidiMapping(); }
+  }
+  function saveMidiMapping(){
+    try{ localStorage.setItem(MIDI_STORAGE_KEY, JSON.stringify(midiMapping)); } catch(e){}
+  }
+
+  var midiMapping = loadMidiMapping();
+  var midiAccess = null;
+  var midiInputsAttached = {};
+  var midiEnabled = false;
+  var midiDebug = false;
+  var learningParam = null;
+  var learnTimeout = null;
+
+  function setMidiStatus(state_, text){
+    els.midiStatus.className = 'pill ' + state_;
+    els.midiStatusText.textContent = text;
+  }
+  function showMidiMsg(state_, text){
+    els.midiMsg.className = 'msg' + (state_ ? (' ' + state_) : '');
+    els.midiMsg.textContent = text;
+  }
+  function countMidiInputs(){
+    var n = 0;
+    if (midiAccess) midiAccess.inputs.forEach(function(){ n++; });
+    return n;
+  }
+  function attachAllMidiInputs(){
+    if (!midiAccess) return;
+    midiAccess.inputs.forEach(function(input){
+      if (midiInputsAttached[input.id]) return;
+      midiInputsAttached[input.id] = true;
+      input.onmidimessage = onMidiMessage;
+    });
+    setMidiStatus('ok', countMidiInputs() + ' MIDI device(s) detected');
+  }
+
+  function setParamColumnsMidiOn(on){
+    midiEnabled = on;
+    MIDI_KEYS.forEach(function(key){
+      var col = document.getElementById('col-'+key);
+      if (col) col.classList.toggle('midi-on', on);
+    });
+  }
+
+  function enableMidi(){
+    if (!navigator.requestMIDIAccess){
+      setMidiStatus('bad', 'Web MIDI not supported by this browser.');
+      return;
+    }
+    setMidiStatus('pending', 'requesting access…');
+    navigator.requestMIDIAccess({sysex:false}).then(function(access){
+      midiAccess = access;
+      attachAllMidiInputs();
+      midiAccess.onstatechange = attachAllMidiInputs;
+      setParamColumnsMidiOn(true);
+    }).catch(function(err){
+      setMidiStatus('bad', 'access denied: ' + err);
+    });
+  }
+
+  function startLearn(param){
+    if (!midiAccess){
+      showMidiMsg('err', 'Enable MIDI first.');
+      return;
+    }
+    learningParam = param;
+    clearTimeout(learnTimeout);
+    learnTimeout = setTimeout(function(){
+      learningParam = null;
+      renderMidiReadouts();
+      showMidiMsg('err', 'Nothing received for "' + PARAM_LABELS[param] + '" — try again.');
+    }, 15000);
+    renderMidiReadouts();
+    showMidiMsg('', 'Listening for "' + PARAM_LABELS[param] + '" — move/press the desired controller…');
+  }
+
+  function captureLearn(deviceId, deviceName, channel, cc, value){
+    var param = learningParam;
+    clearTimeout(learnTimeout);
+    learningParam = null;
+    var m = midiMapping[param];
+    m.device = deviceId;
+    m.deviceName = deviceName || null;
+    m.channel = channel;
+    m.cc = cc;
+    if (value === 63 || value === 65){
+      m.type = 'relative';
+      if (!m.step) m.step = 1;
+    } else if (m.type === 'relative'){
+      m.type = 'absolute';
+    }
+    saveMidiMapping();
+    renderMidiReadouts();
+    showMidiMsg('ok', 'CC ' + cc + ' (channel ' + (channel+1) + ') learned for "' + PARAM_LABELS[param] + '".');
+  }
+
+  // Maps a raw 0-127 CC value onto one of the available waveforms by
+  // slicing the CC range into as many equal slices as there are waveforms
+  // (7 waveforms => slices of ~127/7 ≈ 18.1 each).
+  function applyMidiToWaveform(value){
+    var idx = Math.min(WAVEFORMS.length - 1, Math.floor(value / 128 * WAVEFORMS.length));
+    var wf = WAVEFORMS[idx][0];
+    if (wf === state.waveform) return;
+    state.waveform = wf;
+    els.waveform.value = wf;
+    updateDutyVisibility();
+    if (state.mode === 'param') refreshAll();
+  }
+
+  // Applies an incoming MIDI CC value to a mapped target, respecting that
+  // target's current bounds: absolute CCs (0-127) are scaled linearly onto
+  // [min,max], relative encoders step by `step` within [min,max], and
+  // momentary switches flip between toggleLow/toggleHigh (also clamped).
+  function applyValueToParam(param, m, value){
+    if (state.mode !== 'param') return;
+    if (param === 'waveform'){ applyMidiToWaveform(value); return; }
+    var p = state.params[param];
+    var min = p.min, max = p.max;
+    var cur = p.value;
+    var newVal;
+    if (m.type === 'relative'){
+      var delta = 0;
+      if (value === 65) delta = 1;
+      else if (value === 63) delta = -1;
+      else return;
+      if (m.invert) delta = -delta;
+      newVal = cur + delta * (m.step || 1);
+    } else if (m.type === 'momentary'){
+      if (value === 0) return; // ignore note/CC release
+      var low = clamp((m.toggleLow != null) ? m.toggleLow : min, min, max);
+      var high = clamp((m.toggleHigh != null) ? m.toggleHigh : max, min, max);
+      newVal = (cur === high) ? low : high;
+    } else {
+      var v = m.invert ? (127 - value) : value;
+      newVal = min + (v/127)*(max-min);
+    }
+    if (clamp(Math.round(newVal), min, max) === cur) return;
+    setParamValue(param, newVal);
+  }
+
+  function onMidiMessage(evt){
+    var data = evt.data;
+    if (midiDebug) console.debug('[MIDI]', evt.target && evt.target.name, data ? Array.prototype.slice.call(data) : data);
+    if (!data || data.length < 3) return;
+    if ((data[0] & 0xF0) !== 0xB0) return; // CC only
+    var channel = data[0] & 0x0F;
+    var cc = data[1];
+    var value = data[2];
+    var deviceId = evt.target.id;
+
+    if (learningParam){
+      captureLearn(deviceId, evt.target.name, channel, cc, value);
+      return;
+    }
+    MIDI_KEYS.forEach(function(param){
+      var m = midiMapping[param];
+      if (m.cc === null || m.cc === undefined) return;
+      if (m.cc !== cc) return;
+      if (m.device !== null && m.device !== deviceId) return;
+      if (m.channel !== null && m.channel !== channel) return;
+      applyValueToParam(param, m, value);
+    });
+  }
+
+  function renderMidiReadouts(){
+    MIDI_KEYS.forEach(function(key){
+      var m = midiMapping[key];
+      var el = els['midiReadout'+key];
+      if (!el) return;
+      if (learningParam === key){
+        el.textContent = 'Listening…';
+        return;
+      }
+      if (m.cc === null || m.cc === undefined){
+        el.textContent = 'Ch – / CC –';
+      } else {
+        var ch = (m.channel === null || m.channel === undefined) ? 'any' : (m.channel+1);
+        el.textContent = 'Ch ' + ch + ' / CC ' + m.cc;
+      }
+      var btn = document.querySelector('.param-col[data-param="'+key+'"] button.learn');
+      if (btn) btn.classList.toggle('listening', learningParam === key);
+    });
+  }
+
+  els.midiEnable.addEventListener('click', enableMidi);
+  els.midiDebug.addEventListener('change', function(){ midiDebug = els.midiDebug.checked; });
+  els.midiResetDefaults.addEventListener('click', function(){
+    midiMapping = defaultMidiMapping();
+    saveMidiMapping();
+    renderMidiReadouts();
+    showMidiMsg('ok', 'MIDI mapping reset to defaults.');
+  });
+
+  // =====================================================================
+  // Full-page configuration export / import
+  // =====================================================================
+  function buildConfig(){
+    return {
+      formatVersion: 1,
+      target: {
+        addr: els.addr.value,
+        length: curveLength(),
+        autoInject: els.autoinject.checked,
+        autoInjectDebounceMs: autoInjectDebounceMs(),
+      },
+      mode: state.mode,
+      waveform: state.waveform,
+      params: state.params,
+      equation: state.equation,
+      freehandCurve: (state.mode === 'free') ? curve.slice() : null,
+      encoding: state.encoding,
+      midiMapping: midiMapping,
+    };
+  }
+
+  function applyConfig(cfg){
+    if (!cfg || typeof cfg !== 'object') throw new Error('empty configuration');
+
+    if (cfg.target){
+      if (cfg.target.addr) els.addr.value = cfg.target.addr;
+      if (cfg.target.length){ els.length.value = cfg.target.length; commitLength(); }
+      els.autoinject.checked = !!cfg.target.autoInject;
+      if (cfg.target.autoInjectDebounceMs != null) els.autoinjectDebounce.value = cfg.target.autoInjectDebounceMs;
+    }
+
+    if (cfg.params){
+      PARAM_KEYS.forEach(function(key){
+        if (cfg.params[key]){
+          var p = state.params[key];
+          if (cfg.params[key].min != null) p.min = cfg.params[key].min;
+          if (cfg.params[key].max != null) p.max = cfg.params[key].max;
+          if (cfg.params[key].value != null) p.value = cfg.params[key].value;
+        }
+      });
+    }
+    if (cfg.waveform) state.waveform = cfg.waveform;
+    if (cfg.equation != null){ state.equation = cfg.equation; els.equation.value = cfg.equation; }
+
+    buildParamColumns(); // rebuild columns to reflect new ranges/values/waveform
+
+    if (cfg.encoding){
+      var e = cfg.encoding;
+      els.encType.value = (e.type === 'gateArray') ? 'gateArray' : 'data';
+      if (e.gradientKey && GRADIENTS[e.gradientKey]) els.encGradient.value = e.gradientKey;
+      if (e.sizeBytes) els.encSize.value = e.sizeBytes;
+      if (e.outMin != null) els.encMin.value = e.outMin;
+      if (e.outMax != null) els.encMax.value = e.outMax;
+      if (e.clampMode) els.encClamp.value = e.clampMode;
+      els.encAnd.value = (e.andMask != null) ? ('#' + e.andMask.toString(16).toUpperCase()) : '';
+      els.encOr.value = (e.orMask != null) ? ('#' + e.orMask.toString(16).toUpperCase()) : '';
+      readEncodingFromUI();
+    }
+
+    if (cfg.midiMapping){
+      midiMapping = mergeWithDefaults(cfg.midiMapping);
+      saveMidiMapping();
+      renderMidiReadouts();
+    }
+
+    var mode = cfg.mode || 'param';
+    setMode(mode);
+    if (mode === 'free' && Array.isArray(cfg.freehandCurve)){
+      for (var i=0;i<curve.length && i<cfg.freehandCurve.length;i++) curve[i] = cfg.freehandCurve[i];
+      drawGraph(); updateSource();
+    }
+  }
+
+  els.cfgExport.addEventListener('click', function(){
+    var json = JSON.stringify(buildConfig(), null, 2);
+    var blob = new Blob([json], {type:'application/json'});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url; a.download = 'curve-injector-config.json';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    els.cfgMsg.className = 'msg ok';
+    els.cfgMsg.textContent = 'Configuration exported.';
+  });
+
+  els.cfgImport.addEventListener('click', function(){ els.cfgImportFile.click(); });
+  els.cfgImportFile.addEventListener('change', function(){
+    var file = els.cfgImportFile.files[0];
+    if (!file) return;
+    var reader = new FileReader();
+    reader.onload = function(){
+      try{
+        applyConfig(JSON.parse(reader.result));
+        els.cfgMsg.className = 'msg ok';
+        els.cfgMsg.textContent = 'Configuration imported.';
+      } catch(e){
+        els.cfgMsg.className = 'msg err';
+        els.cfgMsg.textContent = 'Invalid JSON: ' + e.message;
+      }
+    };
+    reader.readAsText(file);
+    els.cfgImportFile.value = '';
+  });
+
+  // =====================================================================
+  // Init
+  // =====================================================================
+  buildParamColumns();
+  populateGradientSelect();
+  readEncodingFromUI();
+  refreshAll();
+  checkConnection();
+})();
+</script>
