@@ -478,6 +478,7 @@ Returns a table with all registers:
 | `I`, `R` | Interrupt / refresh registers |
 | `IFF1`, `IFF2` | Interrupt flip-flops (0 or 1) |
 | `IM` | Interrupt mode (0, 1 or 2) |
+| `ticks` | NOPs (1 µs each) since the last hard reset, SNA load or rewind step — not reset by a soft reset. Subtract two readings to time code within one run (read-only, ignored by `setZ80`) |
 
 ```lua
 cpc.setZ80({PC=0x4000, A=0x3E})   -- partial update, other registers unchanged
@@ -547,12 +548,32 @@ cpc.pause(false)      -- resume
 
 ```lua
 local ga = cpc.getGateArray()
--- ga.mode          : video mode (0, 1 or 2)
--- ga.border        : AMSTRAD color index of the border (0–31)
--- ga.border_rgb    : RGB24 color of the border (0xRRGGBB)
--- ga.inks[1..16]   : AMSTRAD index of each ink (1-indexed)
--- ga.inks_rgb[1..16] : RGB24 color of each ink
+-- Same fields as GET /api/ga:
+-- ga.mode             : video mode (0, 1 or 2)
+-- ga.border_idx       : AMSTRAD color index of the border (0–31)
+-- ga.border_rgb       : RGB24 color of the border (0xRRGGBB)
+-- ga.hbl / ga.vbl     : Gate Array HBL / VBL state (booleans)
+-- ga.ink_idx[0..15]   : AMSTRAD index of each pen, keyed by pen number (ink_idx[0] = PEN 0)
+-- ga.ink_rgb[0..15]   : RGB24 color of each pen, keyed by pen number
+-- plus every signal the loaded core publishes, under its /api/ga key
+-- Older keys, kept for existing scripts:
+-- ga.border           : same as border_idx
+-- ga.inks[1..16] / ga.inks_rgb[1..16] : the same pens, 1-indexed (inks[1] = PEN 0)
 ```
+
+### CRTC
+
+```lua
+local crtc = cpc.getCRTC()
+-- Same fields as GET /api/crtc:
+-- crtc.regs[0..13]    : R0–R13, keyed by register number (regs[9] = R9)
+-- crtc.selected_reg   : register selected by the last &BCxx write
+-- plus every signal the loaded core publishes (counters, HSYNC/VSYNC…), under its /api/crtc key
+-- crtc.ticks          : the tick counter, as in cpc.getZ80()
+```
+
+`regs`, `ink_idx` and `ink_rgb` are keyed from 0, so `ipairs()` and `#` skip
+their first entry — iterate them with `for i = 0, 13 do … end`.
 
 ### PSG AY-3-8912
 

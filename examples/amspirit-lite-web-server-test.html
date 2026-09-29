@@ -57,7 +57,7 @@ textarea{resize:vertical;min-height:48px;width:100%}
     <span class="url">/api/events</span>
     <span id="sse-status" style="font-size:.75em;margin-left:8px;color:#888">disconnected</span>
   </div>
-  <div class="body-preview">Persistent push stream. The server sends events as they occur. No polling needed.</div>
+  <div class="body-preview">Persistent push stream. The server sends events as they occur. No polling needed. z80_bp carries the registers and ticks at the stop: to run to the next breakpoint, keep this open and resume (POST /api/config {"paused":false}).</div>
 
   <div class="param-row" style="margin-bottom:6px">
     <label>Topics</label>
@@ -137,7 +137,7 @@ textarea{resize:vertical;min-height:48px;width:100%}
     <span class="method">GET</span>
     <span class="url">/api/ping</span>
   </div>
-  <div class="body-preview">Connection probe + emulator status (fps, paused, cpc_model, crtc_type). Used by the UI for the connection overlay.</div>
+  <div class="body-preview">Connection probe + emulator status (fps, paused, cpc_model, crtc_type, ticks = NOPs since the last hard reset/SNA load/rewind, applied_cmd_seq). Used by the UI for the connection overlay.</div>
   <div class="controls">
     <button onclick="runGet('/api/ping','resp-ping')">Send</button>
     <span id="badge-ping"></span>
@@ -151,7 +151,7 @@ textarea{resize:vertical;min-height:48px;width:100%}
     <span class="method">GET</span>
     <span class="url">/api/z80</span>
   </div>
-  <div class="body-preview">Z80 registers snapshot (PC, SP, AF/BC/DE/HL + alternates, IX, IY, I, R, IFF1/2, IM)</div>
+  <div class="body-preview">Z80 registers snapshot (PC, SP, AF/BC/DE/HL + alternates, IX, IY, I, R, IFF1/2, IM) + ticks</div>
   <div class="controls">
     <button onclick="runGet('/api/z80','resp-z80')">Send</button>
     <span id="badge-z80"></span>
@@ -221,7 +221,7 @@ textarea{resize:vertical;min-height:48px;width:100%}
     <span class="method">GET</span>
     <span class="url">/api/state</span>
   </div>
-  <div class="body-preview">Combined snapshot: z80 + ga + crtc + psg + fdc + emu (aggregate of the sub-endpoints above)</div>
+  <div class="body-preview">Combined snapshot: z80 + ga + crtc + psg + fdc + beam + emu (aggregate of the sub-endpoints above)</div>
   <div class="controls">
     <button onclick="runGet('/api/state','resp-state')">Send</button>
     <span id="badge-state"></span>
@@ -249,7 +249,7 @@ textarea{resize:vertical;min-height:48px;width:100%}
     <span class="method">GET</span>
     <span class="url">/api/ram?addr=…&amp;len=…&amp;bank=…</span>
   </div>
-  <div class="body-preview">Hex dump of CPC RAM. bank=0 = central RAM, bank=1..N = extended page N-1. view=cpu = memory as the Z80 sees it (ROM overlays + banking).</div>
+  <div class="body-preview">Hex dump of CPC RAM. bank = 16K bank index: 0–3 = base 64K, 4+ = extension (B00–B103); an addr above 0x3FFF carries into it. view=cpu = memory as the Z80 sees it (ROM overlays + banking).</div>
   <div class="param-row">
     <label>addr</label><input id="ram-addr" value="0" size="6">
     <label>len</label><input id="ram-len" value="64" size="6">
@@ -408,16 +408,47 @@ textarea{resize:vertical;min-height:48px;width:100%}
 
 <!-- ======================= POST ENDPOINTS ======================= -->
 <h2>POST Endpoints</h2>
+<div class="body-preview">Every command below answers {"ok":true,"cmd_seq":N} as soon as it is queued. It has taken effect once GET /api/ping's emu.applied_cmd_seq is &gt;= N (a step has then executed; a resume or a BASIC step has started).</div>
 
 <!-- /api/step POST -->
 <div class="endpoint POST">
   <div class="req-line"><span class="method">POST</span><span class="url">/api/step</span></div>
-  <div class="body-preview">Execute exactly one Z80 instruction, then re-pause (no body). Pause the emulator first.</div>
+  <div class="body-preview">Execute exactly one Z80 instruction, then re-pause (no body). Pause the emulator first. Runs the instruction even when a breakpoint sits on the current PC.</div>
   <div class="controls">
     <button onclick="runPostNoBody('/api/step','resp-step')">Send</button>
     <span id="badge-step"></span>
   </div>
   <div class="resp" id="resp-step">—</div>
+</div>
+
+<!-- /api/z80_bp POST -->
+<div class="endpoint POST">
+  <div class="req-line"><span class="method">POST</span><span class="url">/api/z80_bp</span></div>
+  <div class="body-preview">Replace the Z80 PC breakpoint set: comma-separated CPU addresses (decimal or 0x…) or Bnn:hhhh locations; empty = clear all. Resuming never re-breaks on the PC it resumes from.</div>
+  <div class="param-row">
+    <label>addrs</label><input id="z80bp-addrs" value="0xBB06" size="24">
+  </div>
+  <div class="controls">
+    <button onclick="runZ80Bp()">Send</button>
+    <span id="badge-z80-bp"></span>
+  </div>
+  <div class="resp" id="resp-z80-bp">—</div>
+</div>
+
+<!-- /api/media POST -->
+<div class="endpoint POST">
+  <div class="req-line"><span class="method">POST</span><span class="url">/api/media?name=…&amp;drive=…&amp;crtc=…</span></div>
+  <div class="body-preview">Load a media file (SNA/DSK/HFE/IPF/CPR/CRO/BIN) from the raw body. crtc (SNA only): sna = use the CRTC the snapshot names (default), keep = keep the CRTC emulated before the load (same side of the Plus boundary only: CRTC 3 vs 0/1/2/4). Check emu.crtc_type once applied.</div>
+  <div class="param-row">
+    <label>file</label><input id="media-file" type="file">
+    <label>drive</label><select id="media-drive"><option value="0">A</option><option value="1">B</option></select>
+    <label>crtc</label><select id="media-crtc"><option value="sna">sna</option><option value="keep">keep</option></select>
+  </div>
+  <div class="controls">
+    <button onclick="runMedia()">Send</button>
+    <span id="badge-media"></span>
+  </div>
+  <div class="resp" id="resp-media">—</div>
 </div>
 
 <!-- /api/render POST -->
@@ -540,7 +571,7 @@ textarea{resize:vertical;min-height:48px;width:100%}
     <span class="method">POST</span>
     <span class="url">/api/ram</span>
   </div>
-  <div class="body-preview">Write bytes to CPC RAM. data = hex string. exec=true → also set PC to entry. Queued (several calls in the same tick all apply, in order) — response includes a "seq"; poll /api/state's emu.ram_apply_seq until it reaches that value before trusting a readback.</div>
+  <div class="body-preview">Write bytes to CPC RAM. data = hex string. exec=true → also set PC to entry. Queued (several calls in the same tick all apply, in order) — response includes a "seq"; poll /api/state's emu.ram_apply_seq until it reaches that value before trusting a readback (or use its cmd_seq, like any command).</div>
   <div class="param-row">
     <label>addr</label><input id="ram-write-addr" value="32768" size="8">
     <label>data (hex)</label><input id="ram-write-data" value="3E 0A D3 F5" size="24" placeholder="space-separated hex bytes">
@@ -792,6 +823,23 @@ function runPostJSON(path, obj, respId) {
 function runPostNoBody(path, respId) {
   const badgeId = respId.replace(/^resp-/, '');
   doFetch(path, {method:'POST'}, respId, badgeId);
+}
+
+function runZ80Bp() {
+  doFetch('/api/z80_bp', {
+    method: 'POST',
+    headers: {'Content-Type': 'text/plain'},
+    body: document.getElementById('z80bp-addrs').value
+  }, 'resp-z80-bp', 'z80-bp');
+}
+
+function runMedia() {
+  const f = document.getElementById('media-file').files[0];
+  if (!f) { document.getElementById('resp-media').textContent = 'choose a file first'; return; }
+  const drive = document.getElementById('media-drive').value;
+  const crtc = document.getElementById('media-crtc').value;
+  const qs = `name=${encodeURIComponent(f.name)}&drive=${drive}&crtc=${crtc}`;
+  doFetch(`/api/media?${qs}`, {method: 'POST', body: f}, 'resp-media', 'media');
 }
 
 function runBasicStep() {

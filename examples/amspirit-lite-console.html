@@ -107,9 +107,7 @@ const EMU_DEFAULT_PORT = 6128;
 const API_BASE = (() => {
   const l = window.location;
   if (l.protocol === 'file:') return 'http://127.0.0.1:' + EMU_DEFAULT_PORT;
-  const port = parseInt(l.port) || (l.protocol === 'https:' ? 443 : 80);
-  if ((l.hostname === '127.0.0.1' || l.hostname === 'localhost' || l.hostname === '[::1]')
-      && port === EMU_DEFAULT_PORT) return '';
+  if (l.hostname === '127.0.0.1' || l.hostname === 'localhost' || l.hostname === '[::1]') return '';
   return 'http://127.0.0.1:' + EMU_DEFAULT_PORT;
 })();
 
@@ -156,7 +154,7 @@ async function ping() {
     const r = await fetch(API_BASE + '/api/ping');
     const d = await r.json();
     g_connected = true;
-    setState('on', 'AMSpiriT ' + (d.lite || '') + ' · ' + Math.round(d.emu.fps) + ' fps'
+    setState('on', 'AMSpiriT ' + (d.version || '') + ' · ' + Math.round(d.emu.fps) + ' fps'
                    + (d.emu.paused ? ' · paused' : ''));
   } catch (e) {
     g_connected = false;
@@ -398,6 +396,7 @@ const REF = [
     ['cpc.getRam(addr, len)', '→ array of bytes'],
     ['cpc.setRam(addr, data)', 'write an array of bytes'],
     ['cpc.getGateArray()', '→ pen/border/mode/ROM banking state'],
+    ['cpc.getCRTC()', '→ CRTC registers R0-R13 (regs[n] = Rn) + counters/signals'],
     ['cpc.getPSG()', '→ the 16 AY-3-8912 registers'],
     ['cpc.getFDC()', '→ floppy controller state (motor, track, ...)'],
     ['cpc.getAudio()', '→ current audio output state'],

@@ -60,7 +60,9 @@ as long as the server is running.
 | `audio_ring` | `AudioRing*` | `nullptr` | Audio recording ring buffer (init with `web_audio_ring_init`) |
 | `frames` | `std::atomic<uint64_t>` | `0` | Completed emulated video frames; the frontend must bump this once per frame — source of `emu.frames` |
 | `autotype_remaining` | `std::atomic<int>` | `0` | Characters/VK presses left to deliver, updated by the frontend each frame — source of `emu.autotyping`/`emu.autotype_remaining` |
-| `tl_active` / `tl_steps_back` / `tl_steps_fwd` / `tl_rewound` / `tl_step_kind` | `bool` / `int` / `int` / `bool` / `std::string` | `false` / `0` / `0` / `false` / `""` | Timelapse state, written by the frontend each frame — source of the `tl_*` fields in `emu` (see `GET /api/state`) and consumed by `POST /api/tl_back` |
+| `rw_active` / `rw_steps_back` / `rw_steps_fwd` / `rw_rewound` / `rw_step_kind` | `bool` / `int` / `int` / `bool` / `std::string` | `false` / `0` / `0` / `false` / `""` | Rewind state, written by the frontend each frame — source of the `rw_*` fields in `emu` (see `GET /api/state`) and consumed by `POST /api/rewind/back` |
+| `rw_enabled` / `rw_interval` / `rw_slots` | `bool` / `int` / `int` | `false` / `10` / `100` | Rewind configuration, written by the frontend each frame — source of the `rw_*` fields of `GET /api/config` |
+| `machine_sounds_unlocked` / `machine_sounds_live` | `bool` / `MachineSoundsChange` | `false` / — | Experimental features unlocked, and the machine sounds switches/volumes, written by the frontend each frame — gate and source of the `machine_sounds_*` fields of `/api/config` |
 | `render_monitor` / `render_crt` | `int` / `CrtParams` | `0` / — | Current CRT monitor preset and shader parameters, written by the frontend each frame — source of `GET /api/render` |
 | `debug_api` | `bool` | `false` | Set at startup: log every incoming request, response status, and SSE event |
 | `audio_devices` / `audio_current_device` | `std::vector<std::string>` / `std::string` | `{}` / `""` | Audio device list and current selection, populated by the frontend at startup — source of `GET /api/audio/devices` |
@@ -108,7 +110,7 @@ Consumed by `web_server_poll`.
 | `do_step` | `bool` | Execute exactly one Z80 instruction then re-pause |
 | `do_basic_step` | `bool` | Run until the BASIC statement/line advances then re-pause |
 | `basic_step_byline` | `bool` | `true` = step to next BASIC line; `false` = next statement |
-| `do_tl_back` | `bool` | Navigate the timelapse one step back (requires an active timelapse — see `POST /api/tl_back`) |
+| `do_rw_back` | `bool` | Navigate the rewind one step back (requires an active rewind — see `POST /api/rewind/back`) |
 | `set_breakpoints` | `bool` | Replace the BASIC line-breakpoint set |
 | `breakpoints` | `std::vector<uint16_t>` | BASIC line numbers to break on |
 | `set_z80_breakpoints` | `bool` | Replace the Z80 PC breakpoint set |
@@ -131,6 +133,10 @@ Consumed by `web_server_poll`.
 | `new_audio_device` | `std::string` | Device name; empty = system default |
 | `do_set_volume` | `bool` | Set the output volume (see `volume` in `POST /api/config`) |
 | `new_volume_pct` | `int` | New volume, 0–100 percent |
+| `set_rewind` | `bool` | Reconfigure the rewind buffer (see `rw_*` in `POST /api/config`) |
+| `rw_enabled` / `rw_interval` / `rw_slots` | `int` | New rewind settings; `-1` = unchanged |
+| `history_size` | `int` | New Z80 history depth; `-1` = unchanged |
+| `machine_sounds` | `MachineSoundsChange` | New machine sounds switches/volumes; each field `-1` = unchanged |
 
 #### `WebRamWrite`
 
@@ -215,9 +221,32 @@ All responses include:
 
 ---
 
+## Commands: accepted now, applied later
+
+A request that changes the machine — pause/resume, step, breakpoints, RAM or
+register writes, media, reset… — is a **command**: the server accepts it at
+once but the emulation loop applies it on its next iteration, so a read made
+right after the response still shows the old state.
+
+Every command's response carries a `cmd_seq`, strictly increasing across all
+commands. `GET /api/ping` (and `GET /api/state`) report `emu.applied_cmd_seq`:
+once it is `>= cmd_seq`, the command has been applied **and** the emulation has
+run after it — a `POST /api/step` has executed its instruction. A command whose
+effect spans frames (resume, BASIC step, run-to) is then *started*; watch
+`emu.paused` or the SSE `pause`/`z80_bp` events for its end.
+
+```bash
+seq=$(curl -s -X POST http://127.0.0.1:6128/api/step | jq .cmd_seq)
+until [ "$(curl -s http://127.0.0.1:6128/api/ping | jq .emu.applied_cmd_seq)" -ge "$seq" ]; do :; done
+curl -s http://127.0.0.1:6128/api/z80   # the stepped state
+```
+
+`POST /api/ram` / `POST /api/exec` also keep their own `seq`, matched by
+`emu.ram_apply_seq` (below); `cmd_seq` covers them too.
+
 ## Request bodies and errors
 
-**A `200 {"ok":true}` means the request was applied.** An endpoint that cannot use
+**A `200 {"ok":true}` means the request was accepted.** An endpoint that cannot use
 what it was sent answers `400` with an explanation instead — it never reports
 success for a request it ignored:
 
@@ -309,7 +338,7 @@ Available topics: `frame`, `z80_bp`, `basic_bp`, `pause`, `reset`
 | Event | Frequency | Payload |
 |---|---|---|
 | `frame` | Every 10 frames (~5 Hz) | Z80 snapshot + FPS + pause state |
-| `z80_bp` | Immediate on hit | PC + full Z80 registers |
+| `z80_bp` | Immediate on hit | PC + Z80 registers + `ticks` at the stop |
 | `basic_bp` | Immediate on hit | BASIC line number + statement address |
 | `pause` | On transition | `{"paused": true\|false}` |
 | `reset` | On hard/soft reset | `{"hard": true\|false}` |
@@ -331,9 +360,16 @@ Available topics: `frame`, `z80_bp`, `basic_bp`, `pause`, `reset`
   "pc": "0x4A3F",
   "a": 65, "f": 0, "b": 0, "c": 0,
   "d": 0, "e": 0, "h": 0, "l": 0,
-  "sp": "0xBFF0", "ix": "0x0000", "iy": "0x0000"
+  "sp": "0xBFF0", "ix": "0x0000", "iy": "0x0000",
+  "ticks": 85400000
 }
 ```
+
+`ticks` is the tick counter at the stop (see `emu.ticks`): subtracting two
+`z80_bp` events times the code between the two breakpoints in NOPs, without a
+single HTTP round trip. To run to the next breakpoint, listen on
+`?topics=z80_bp` and `POST /api/config {"paused":false}`; the event describes
+the stop, and `GET /api/state` (which includes `beam`) completes it.
 
 **`basic_bp` payload**:
 ```json
@@ -362,16 +398,35 @@ curl -s http://127.0.0.1:6128/api/doc
 # {"license":{"summary":"…","url":"/api/license"},"endpoints":[{"path":"/api/ping","methods":["GET"],"summary":"…"}, …]}
 ```
 
+A row carrying `"prefix":true` (only `/api/doc/`) is a prefix: append a name to
+it — see below.
+
 ### `GET /api/doc/<name>`
 
 Full detail for one endpoint: every operation, its parameters (query or body,
-type, required-or-default) and its response shape. `<name>` is the path segment
+type, required-or-default) and its response. `<name>` is the path segment
 under `/api/` — `/api/doc/ram` describes `/api/ram`. The only prefix-matched
 route on this API. Answers `404` for a name the record does not know.
 
+A JSON response is described by **`fields`**, one entry per field: `name` is
+its dotted path from the root (`emu.frames`; array elements appear as `name[]`,
+e.g. `endpoints[].path`), plus `type`, a one-line `desc`, an `example` value
+(JSON text) and `optional: true` when the field may be absent. Nested objects
+are listed before their children. The list is exhaustive: the test suite checks
+it against what the endpoints really return. The signals a chip publishes
+beyond its base fields (`GET /api/ga`, `GET /api/crtc`, and the same objects in
+`GET /api/state`) are listed as the loaded core reports them, at the time of
+the request.
+
+A non-JSON response (HTML page, SSE stream, PNG, plain text) has no `fields`,
+but a one-line **`response`** saying what it carries.
+
 ```bash
-curl -s http://127.0.0.1:6128/api/doc/ram
-# {"path":"/api/ram","operations":[{"method":"GET","params":[…],…}]}
+curl -s http://127.0.0.1:6128/api/doc/ping
+# {"path":"/api/ping","operations":[{"method":"GET","summary":"…","params":[],
+#   "fields":[{"name":"ok","type":"bool","desc":"…","example":"true"},
+#             {"name":"emu","type":"object","desc":"…"},
+#             {"name":"emu.fps","type":"float","desc":"…","example":"50.0"}, …]}]}
 ```
 
 ### `GET /api/license`
@@ -394,11 +449,11 @@ curl -s http://127.0.0.1:6128/api/license
 
 Lightweight connectivity probe used by the web UI to detect whether the server is reachable.
 
-**Response**: `200 application/json` — `{"ok":true,"emu":{...}}` (same `emu` object as in `GET /api/state`)
+**Response**: `200 application/json` — `{"ok":true,"emu":{...},"frontend":"lite","version":"1.15.4","core":2491682}` (`emu` is the same object as in `GET /api/state`; `frontend` identifies which client answered — other protocol-compatible emulators would report a different value here — `version` is that frontend's version, `core` the emulation core's build number)
 
 **Pacing an automation client — read `emu.frames`, never `time.sleep()`**
 
-`emu.frames` counts *completed emulated video frames* since startup (see `GET /api/state`). It is the only emulated-time clock exposed over plain HTTP, and the one an automated client must pace itself on:
+`emu.frames` counts *completed emulated video frames* since startup (see `GET /api/state`). It is the emulated-time clock an automated client must pace itself on — `emu.ticks` is finer (one per NOP) but restarts from 0 on every hard reset, SNA load and rewind step, so it times code, it does not pace a session:
 
 * **A reachable server does not mean a running machine.** The HTTP server answers before the emulation loop produces its first frame — a fraction of a second on the SDL2 frontend, but measured at **1.6 s on the Qt AppImage** (toolkit + OpenGL + FUSE startup). While `frames == 0` the Z80 has not executed a single cycle: `PC` is 0 and RAM still holds its post-reset fill, so a "screen is non-empty and stopped changing" boot heuristic is satisfied by a machine that has not booted at all. Wait for `frames > 0` first.
 * **Wall clock ≠ emulated frames.** Typed input drains from the autotype queue at a few *emulated* frames per character (`POST /api/keytype`), and the frontends re-pace themselves against an absolute deadline after any stall, so `N × 20 ms` of sleeping is not `N` frames. Poll `emu.frames` until it has advanced by the budget you want instead — keystrokes sent early are silently swallowed by the booting firmware.
@@ -431,7 +486,7 @@ Direct read without lock (display-only data, accepts slight inconsistency).
     "A2": 0, "F2": 0, "B2": 0, "C2": 0,
     "D2": 0, "E2": 0, "H2": 0, "L2": 0,
     "IX": 0, "IY": 0, "I": 0, "R": 0,
-    "IFF1": 1, "IFF2": 1, "IM": 1
+    "IFF1": 1, "IFF2": 1, "IM": 1, "ticks": 85400000
   },
   "ga": {
     "mode": 1,
@@ -456,22 +511,29 @@ Direct read without lock (display-only data, accepts slight inconsistency).
   },
   "fdc": {
     "msr": 128, "sr0": 0, "sr1": 0, "sr2": 0,
-    "motor": false, "drive": 0
+    "motor": false, "drive": 0, "spin_us": 0,
+    "drives": [
+      {"connected": true, "disk": true, "track": 0, "steps": 0, "step_us": 0, "dir": 0, "changes": 1},
+      {"connected": false, "disk": false, "track": 0, "steps": 0, "step_us": 0, "dir": 0, "changes": 0}
+    ]
   },
+  "beam": {"x": 320, "y": 150, "cx": 32, "cy": 24, "cw": 768, "ch": 544},
   "emu": {
     "fps": 50.0,
     "frame_ms": 0.8,
     "frames": 4271,
+    "ticks": 85400000,
     "paused": false,
-    "cpc_model": 2,
+    "cpc_model": "6128",
     "crtc_type": 0,
     "autotyping": false,
     "autotype_remaining": 0,
-    "tl_active": false,
-    "tl_steps_back": 0,
-    "tl_steps_fwd": 0,
-    "tl_step_kind": "frame",
-    "ram_apply_seq": 0
+    "rw_active": false,
+    "rw_steps_back": 0,
+    "rw_steps_fwd": 0,
+    "rw_step_kind": "frame",
+    "ram_apply_seq": 0,
+    "applied_cmd_seq": 0
   }
 }
 ```
@@ -483,6 +545,7 @@ Direct read without lock (display-only data, accepts slight inconsistency).
 | `z80` | `PC`…`L2` | Z80 registers, unsigned integer values |
 | `z80` | `IFF1/IFF2` | Interrupt flip-flops (0 or 1) |
 | `z80` | `IM` | Interrupt mode (0, 1 or 2) |
+| `z80` | `ticks` | Same value as `emu.ticks` |
 | `ga` | `mode` | Gate Array video mode (0, 1 or 2) |
 | `ga` | `border_idx` | AMSTRAD color index of the border (0–31) |
 | `ga` | `border_rgb` | Border color in packed RGB24 (`0xRRGGBB`) |
@@ -501,16 +564,27 @@ Direct read without lock (display-only data, accepts slight inconsistency).
 | `fdc` | `sr0/sr1/sr2` | Status Registers 0/1/2 |
 | `fdc` | `motor` | Drive motor state |
 | `fdc` | `drive` | Active drive (0 or 1) |
+| `fdc` | `spin_us` | Motor inertia, shared by both drives: 0 (stopped) to 400000 (full speed); rises on spin-up, falls on spin-down |
+| `fdc` | `drives[]` | Per-drive mechanical state, index 0 = A, 1 = B |
+| `fdc.drives[]` | `connected` / `disk` | Drive present (B only when enabled) / disk inserted |
+| `fdc.drives[]` | `track` | Physical head position |
+| `fdc.drives[]` | `steps` | Cumulative head steps since start-up (never reset; diff two reads to count steps) |
+| `fdc.drives[]` | `step_us` | Time between the last two steps, in µs (large = isolated step) |
+| `fdc.drives[]` | `dir` | Direction of the last step: `1` inwards, `-1` towards track 0, `0` none yet |
+| `fdc.drives[]` | `changes` | Cumulative disk changes: +1 per ejection and per insertion; replacing the disk in the drive increases it while `disk` stays true |
+| `beam` | `x`…`ch` | Same object as `GET /api/beam` (default crop) |
 | `emu` | `fps` | Current emulation speed |
 | `emu` | `frame_ms` | Per-frame computation time in ms |
 | `emu` | `frames` | Completed emulated frames since startup (0 = the emulation loop has not run yet; the clock an automation client must pace itself on — see `GET /api/ping`) |
+| `emu` | `ticks` | NOPs (1 µs each) since the last hard reset, SNA load or rewind step — not reset by a soft reset. Subtract two readings to time code within one run |
 | `emu` | `autotyping` | `true` while `POST /api/keytype` / `/api/keypress` still have characters or key presses to deliver |
 | `emu` | `autotype_remaining` | How many are left (0 = idle). Counts bytes of the pending text plus queued VK presses |
-| `emu` | `cpc_model` | CPC model: 0=464, 1=664, 2=6128, 4=6128+, 5=464+, 6=GX4000 |
+| `emu` | `cpc_model` | CPC model name: `"464"`, `"664"`, `"6128"`, `"6128+"`, `"464+"`, `"GX4000"` (contrast with `GET /api/config`'s `cpc_model`, which stays a numeric id since it also doubles as `POST /api/config`'s input field) |
 | `emu` | `crtc_type` | CRTC type (0–4) |
-| `emu` | `tl_active` | `true` if the timelapse is enabled and has at least one snapshot |
-| `emu` | `tl_steps_back` / `tl_steps_fwd` | Steps available to navigate the timelapse backward/forward (context-filtered to `tl_step_kind`) |
-| `emu` | `tl_step_kind` | Current step-context kind: `"frame"`, `"basic"`, or `"z80"` |
+| `emu` | `rw_active` | `true` if the rewind is enabled and has at least one snapshot |
+| `emu` | `rw_steps_back` / `rw_steps_fwd` | Steps available to navigate the rewind backward/forward (context-filtered to `rw_step_kind`) |
+| `emu` | `rw_step_kind` | Current step-context kind: `"frame"`, `"basic"`, or `"z80"` |
+| `emu` | `applied_cmd_seq` | Highest `cmd_seq` applied, the emulation having run after it (see *Commands: accepted now, applied later*) |
 | `emu` | `ram_apply_seq` | Bumped once per queued `WebRamWrite` actually applied by the main thread; compare against the `seq` a `POST /api/ram`/`/api/exec` response returned before trusting a readback (see `WebRamWrite` above) |
 
 ---
@@ -573,7 +647,11 @@ Returns the current configuration of `CORE_PARAM_IN`.
   "ram_kb": 128,
   "rom_lang": "EN",
   "mapping_keyboard": false,
-  "volume": 100
+  "volume": 100,
+  "rw_enabled": false,
+  "rw_interval": 10,
+  "rw_slots": 100,
+  "history_size": 20
 }
 ```
 
@@ -590,6 +668,19 @@ above 512 Ko, so larger indexes report 576.
 `volume` is the live output volume (0–100). The frontend snapshots it every
 frame, so it reflects changes made via hotkey (F7/F8), the mouse wheel, or this
 endpoint. (SDL frontend; the Qt frontend has its own native volume widget.)
+
+`rw_enabled` / `rw_interval` / `rw_slots` are the rewind configuration — whether
+the snapshot buffer is on, frames between snapshots, and buffer capacity — as
+set by the CLI, the config file, the Qt/imgui Rewind menu or `POST /api/config`.
+`history_size` is the depth of the Z80 instruction history (`GET /api/history`).
+
+**Experimental — machine sounds.** Only once the experimental features are unlocked
+(unlock sequence in the About window or on the splash), the object also carries
+`machine_sounds_drive`, `machine_sounds_tape`, `machine_sounds_tape_signal`, `machine_sounds_keyboard`
+(booleans) and `machine_sounds_drive_volume`, `machine_sounds_tape_volume`,
+`machine_sounds_keyboard_volume` (0–100): the mechanical sounds of the drive, tape
+and keyboard, mixed on top of the CPC audio. While locked these fields are
+absent.
 
 ---
 
@@ -623,8 +714,23 @@ and applied by the main thread (including reset).
 | `mapping_keyboard` | boolean | Enable/disable keyboard mapping mode |
 | `volume` | integer | Set output volume 0–100 (SDL frontend; Qt uses its native widget) |
 | `audio_device` | string | Switch the audio output device (`""` = system default). Device names come from `GET /api/audio/devices`. SDL frontend only |
+| `rw_enabled` | boolean | Enable/disable the rewind buffer |
+| `rw_interval` | integer | Frames between rewind snapshots, 1–500 (50 = 1 s). `1` = one snapshot per frame, the setting for debugging |
+| `rw_slots` | integer | Rewind buffer capacity, 10–2000 snapshots. Each snapshot takes ~1.6 MB of RAM |
+| `history_size` | integer | Depth of the Z80 instruction history, 1–100000 (default 20). Resizing empties it and clears the rewind buffer. Not persisted |
+| `machine_sounds_drive` / `machine_sounds_tape` / `machine_sounds_keyboard` | boolean | **Experimental.** Drive, tape and keyboard sounds on/off (keyboard = keys typed by the emulator: autotype, scripts) |
+| `machine_sounds_tape_signal` | boolean | **Experimental.** Also hear the tape data signal |
+| `machine_sounds_drive_volume` / `machine_sounds_tape_volume` / `machine_sounds_keyboard_volume` | integer | **Experimental.** Volume of each source, 0–100 |
 
-**Success response**: `200 application/json` — `{"ok":true}`  
+Any `rw_*` change reconfigures the rewind buffer, which **clears** its history
+(same as the Qt/imgui Rewind settings dialog). Out-of-range values are rejected
+(`400`, `field: rw_*`), not clamped.
+
+The `machine_sounds_*` fields are refused with `403` while the experimental features
+are locked; the whole request is then rejected, other fields included. Once
+unlocked they are persisted like the settings menus.
+
+**Success response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`  
 **Method error response**: `400 text/plain` — `Bad Request`
 
 ---
@@ -639,7 +745,7 @@ writes the shared config — by design). The request is queued and applied by
 the main thread on its next frame, so the `{"ok":true}` response is always
 sent before the process exits.
 
-**Response**: `200 application/json` — `{"ok":true}`
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
 
 ---
 
@@ -682,8 +788,7 @@ same bytes.
 > **⚠ `bank` changed unit without changing name.** It used to count 64 Ko
 > *bank64s*; it now counts 16 Ko **banks**, the CPC's own unit — so a caller
 > written before this change means `bank=4*N` where it says `bank=N`. Nothing can
-> detect it: `bank=1` is valid under both readings. The server logs a `WARN` on
-> any `bank >= 1`, which is the only trace an old script leaves. See
+> detect it: `bank=1` is valid under both readings. See
 > [CONTEXT.md](../../CONTEXT.md) for *bank* vs *bank64*.
 >
 > `bank=4+` reflects the same RAM the Z80 reads and writes once that bank is
@@ -716,7 +821,7 @@ Executed by `web_server_poll` at the next loop iteration.
 
 | Field | Type | Role |
 |---|---|---|
-| `addr` | integer | Destination address (0–65535) |
+| `addr` | integer (decimal or `0x` hex string) | Destination address (0–65535) |
 | `data` | hex string | Bytes to write (spaces and `:` are tolerated, ignored) |
 | `exec` | boolean | If `true`, the Z80 jumps to `entry` after the write |
 | `entry` | integer | Target PC (default = `addr`) |
@@ -768,7 +873,7 @@ curl -X POST http://127.0.0.1:6128/api/keytype \
      -d '{"text":"RUN\r"}'
 ```
 
-**Response**: `200 application/json` — `{"ok":true}`
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
 
 **Pacing** — *not* one character per frame (that claim was wrong):
 
@@ -780,6 +885,15 @@ curl -X POST http://127.0.0.1:6128/api/keytype \
 
 So `RUN"DIAG"` is ~45 frames (~0.9 s), not 9. Do not derive a frame budget from the
 string length: poll instead.
+
+**Disk accesses** — between two keystrokes, typing waits while the drive motor runs
+or the FDC executes a command, and resumes once the access is over (AMSDOS keeps the
+motor on ~2 s after it); a key already down is released on time, never held through
+the access (the firmware would auto-repeat it). The wait is capped at 5 s, so a
+program that leaves the motor on only slows typing down. Otherwise characters were lost: sector transfers run with interrupts off, so
+the firmware does not scan the keyboard, and the program doing the access (`CAT`,
+`LOAD`…) reads no input, so type-ahead overflowed the firmware's key buffer. Text
+posted as `"CAT\rPRINT 1\r"` therefore types `PRINT 1` after the catalogue.
 
 **Completion** — `emu.autotyping` / `emu.autotype_remaining` (`GET /api/ping`,
 `GET /api/state`) report whether characters or queued key presses are still to be
@@ -861,7 +975,7 @@ The window title bar confirms the injection:
 - success: `BASIC injected — type LIST or RUN`
 - failure (program too large): `BASIC inject failed: program too large`
 
-**Response**: `200 application/json` — `{"ok":true}`
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
 
 ---
 
@@ -946,39 +1060,16 @@ CPC SHIFT held alongside the key, which this endpoint now synthesises — pressi
 `CORE_rVK_MAJ_R` (0x1F) produced nothing at all before. Prefer `/api/keytype` for
 text: it resolves the whole shift/control layer from the characters themselves.
 
-**Response**: `200 application/json` — `{"ok":true}`
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
 
 ---
 
 ### `GET /api/keymap`
 
-Returns the current keyboard mapping as JSON.
-
-**Response**: `200 application/json`
-
-```json
-{
-  "layout": "FR",
-  "mapping": [
-    {
-      "sdl_keycode": 32,
-      "vk": 48,
-      "vk_with_shift": -1,
-      "nomod": false
-    },
-    ...
-  ]
-}
-```
-
-| Field | Description |
-|---|---|
-| `layout` | Current keyboard layout (`"FR"`, `"EN"`, `"US"`, `"ES"`, `"DA"`, `"DE"`, `"IT"`, `"PT"`, `"BE"`, `"SW"`, `"CA"`) |
-| `mapping` | Array of key mappings; each entry describes one physical key |
-| `sdl_keycode` | SDL2 key code from the event (internal identifier) |
-| `vk` | CPC virtual key code without shift modifier |
-| `vk_with_shift` | CPC virtual key code with shift modifier (`-1` if no shift variant) |
-| `nomod` | `true` if shift is suppressed for this key when typed |
+Returns the current keyboard mapping as JSON: `keys[]` (one entry per mapped
+host key or character, with the CPC virtual key it types, with and without
+SHIFT), `hotkeys[]` (the emulator's own shortcuts) and `platform`. The exact
+field list is `GET /api/doc/keymap`.
 
 Used by the web interface to display the current keymap layout.
 
@@ -1035,7 +1126,7 @@ curl -X POST 'http://127.0.0.1:6128/api/script?lang=lua' \
      --data-binary @myscript.lua
 ```
 
-**Response**: `200 application/json` — `{"ok":true}`
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
 
 ---
 
@@ -1138,7 +1229,7 @@ Interrupts the currently running script.
 curl -X DELETE http://127.0.0.1:6128/api/script
 ```
 
-**Response**: `200 application/json` — `{"ok":true}`
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
 
 ---
 
@@ -1154,13 +1245,27 @@ briefly resumed and stopped again once the PC has advanced past the current
 instruction (so it works even though the CPU is already sitting on an
 instruction boundary while paused).
 
-**Response**: `200 application/json` — `{"ok":true}`
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
 
 ---
 
 ### `GET /api/history`
 
-Returns the last 20 executed Z80 instructions (oldest first).
+Returns the last executed Z80 instructions (oldest first), with the registers
+as they were just before each one.
+
+The history holds **20** instructions by default. To trace further back — for
+instance to find how the program reached a crash — raise the depth with
+`POST /api/config` `{"history_size":N}` (1–100000, ~24 bytes per entry), let the
+program run to the point of interest, pause, then read it. Resizing empties the
+history (and clears the rewind buffer). The current depth is `history_size` in
+`GET /api/config`.
+
+**Query parameters**:
+
+| Parameter | Default | Description |
+|---|---|---|
+| `n` | all | Return only the `n` most recent entries (1–100000) |
 
 **Response**: `200 application/json`
 
@@ -1192,7 +1297,7 @@ which an instruction has **started executing** since the last reset. Bit
 
 `DELETE` clears the bitmap (and the instruction history).
 
-**Response**: `200 application/json` — `{"ok":true}` for `DELETE`.
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}` for `DELETE`.
 
 ---
 
@@ -1213,7 +1318,7 @@ on, so `GET /api/screenshot` with no parameters keeps working exactly as before)
 | `live` | `1` while paused, else `0` | `1` = in-progress buffer (the frame being drawn), `0` = last settled frame |
 | `full` | `1` | `1` = plain complete frame, `0` = composite (in-progress frame over the previous one, for debugging a partial screen) |
 
-`live` is forced to `0` while the timelapse is rewound: the core does not snapshot
+`live` is forced to `0` while the rewind is rewound: the core does not snapshot
 the in-progress backbuffer, so it would be stale.
 
 **Response**: `200 image/png`, or `503 {"error":"no frame available"}` before the
@@ -1269,6 +1374,48 @@ banking configuration. Drives the memory-map bar in the CPU tab.
 
 ---
 
+### `GET /api/rommap`
+
+Returns the ROM catalog (`rom_registry`): which firmware, extension
+(`R<n>:`) and cartridge-bank ROMs are currently loaded, and from which
+source file. Distinct from `GET /api/memmap`, which describes the live CPU
+memory mapping — `/api/rommap` is bookkeeping of load/unload events, not a
+snapshot of what's paged in right now.
+
+**Response**: `200 application/json`
+
+```json
+{
+  "fw": {"loaded": true, "os_source": "os_6128.rom", "basic_source": "basic_6128.rom"},
+  "ext_rom": [{"number": 7, "loaded": true, "source": "amsdos.rom"}],
+  "cartridge_bank": [{"number": 0, "loaded": true, "source": "game.cpr"}]
+}
+```
+
+| Field | Description |
+|---|---|
+| `fw.loaded` | `true` once a firmware ROM pair (OS + BASIC) has been loaded |
+| `fw.os_source` | Source file the lower (OS) ROM was loaded from, or `null` when unloaded |
+| `fw.basic_source` | Source file the upper (BASIC) ROM was loaded from, or `null` when unloaded. A CRO container that packs both halves into one file reports the same value as `fw.os_source` |
+| `ext_rom[].number` | Extension ROM number (`R<n>:`), e.g. 7 = AMSDOS |
+| `ext_rom[].source` | Source file (a `.rom` for a single extension ROM, or the `.cro` container it came from) |
+| `cartridge_bank[].number` | CPC+ cartridge bank number (0-31) actually populated by the loaded CPR or CRO |
+| `cartridge_bank[].source` | `.cpr` or `.cro` file it was loaded from |
+
+`ext_rom` and `cartridge_bank` are sparse lists: only currently-loaded
+numbers appear. Reloading the same number overwrites its entry. Loading a
+`CORE_CARTRIDGE_SYSTEM` CPR (the OS cartridge) also unloads `fw` and
+`R7:` — the core replaces both internally, so the catalog reflects that
+rather than claiming a ROM the core has just erased is still loaded. A
+`CORE_CARTRIDGE_STD` CPR touches neither.
+
+A CRO with cartridge banks replaces every previous bank; on a Plus it also
+drops the extension ROMs it does not redefine, and `fw` when it provides
+bank 0. A CRO without banks only adds entries. Only group `GNUM=0` of a CRO
+is loaded, so only its ROMs appear.
+
+---
+
 ## Render / CRT Endpoints
 
 Drive the **Render** tab and mirror the Qt CRT-settings dialog.
@@ -1320,7 +1467,7 @@ Selecting a `monitor` preset loads that preset's default parameters. Ranges:
 `curvature` 0–0.03, `scanline`/`sharpness`/`mask`(≤0.25)/`halation`/`diffusion`/`persistence` 0–1,
 `maskType` 0–4, `maskPitch` ~1–6, `convergence` −2…2, `brightness` 0.1–3.
 
-**Response**: `200 application/json` — `{"ok":true}`
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
 
 ---
 
@@ -1378,7 +1525,7 @@ Resumes the program and re-pauses once it advances:
 
 Only meaningful while a program line is running (not in direct mode).
 
-**Response**: `200 application/json` — `{"ok":true}`
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
 
 ---
 
@@ -1393,7 +1540,7 @@ curl -X POST http://127.0.0.1:6128/api/basic_bp -d '10,40,100'
 curl -X POST http://127.0.0.1:6128/api/basic_bp -d ''     # clear all
 ```
 
-**Response**: `200 application/json` — `{"ok":true}`
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
 
 ---
 
@@ -1403,7 +1550,7 @@ One-shot "run to": resumes and pauses when execution reaches the given BASIC
 line (`line=`) or statement address (`addr=`, an `0xAE1B` value from
 `/api/basic_listing`). The target is cleared once hit.
 
-**Response**: `200 application/json` — `{"ok":true}`
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
 
 ---
 
@@ -1457,7 +1604,7 @@ reachable here without a script.
 Every field is validated (type and range) by the router before the handler
 runs, same as `POST /api/ram`'s `addr`/`bank`. At least one field is required.
 
-**Response**: `200 application/json` — `{"ok":true}`
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
 
 ---
 
@@ -1479,7 +1626,7 @@ Returns PSG (AY-3-8912) register state. Same payload as the `"psg"` object in `G
 
 ### `GET /api/fdc`
 
-Returns FDC (PD765) register state. Same payload as the `"fdc"` object in `GET /api/state`.
+Returns FDC (PD765) register state and the per-drive mechanical state (motor inertia, head position, step counter). Same payload as the `"fdc"` object in `GET /api/state`; fields are described in its table.
 
 **Response**: `200 application/json`
 
@@ -1626,6 +1773,8 @@ Replaces the Z80 PC breakpoint set. While breakpoints are active, the emulator p
 
 A CPU address names no byte on its own — what it points at depends on the paging — so it is **resolved against the live mapping when the set is applied**, and stored as the RAM bank or ROM that actually holds it. The log line says where it landed. A breakpoint therefore fires on a byte, not on an address: paging a different bank into that slot will not trigger it.
 
+Resuming — `paused:false`, `POST /api/step`, a BASIC step — always executes the instruction at the current PC, even when a breakpoint sits on it, whatever stopped the CPU there (breakpoint, step, pause). The breakpoint fires again as soon as PC comes back to it. Replacing the set while paused does not change this.
+
 The deprecated `Cx:` form is still accepted, as a **decimal** bank index (which is what it meant on this endpoint), with a warning naming the `B` form. Empty body clears all.
 
 (`GET`/`POST /api/ram` take a plain `bank=`/`addr=` pair instead of this string form: a list of heterogeneous locations needs a self-describing token per entry, a single contiguous range does not.)
@@ -1641,21 +1790,36 @@ curl -X POST http://127.0.0.1:6128/api/z80_bp -d 'B04:0200'
 curl -X POST http://127.0.0.1:6128/api/z80_bp -d ''
 ```
 
-**Response**: `200 application/json` — `{"ok":true}`
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
 
 ---
 
-## Timelapse & Raster Debugging
+## Rewind & Raster Debugging
 
-### `POST /api/tl_back`
+### `POST /api/rewind/back`
 
-Navigates the timelapse one step back. Only meaningful while a timelapse is active (`emu.tl_active`, see `GET /api/state`) — check `emu.tl_steps_back` first to know if there is anywhere to go.
+Navigates the rewind one step back. Only meaningful while a rewind is active (`emu.rw_active`, see `GET /api/state`) — check `emu.rw_steps_back` first to know if there is anywhere to go.
 
 ```bash
-curl -X POST http://127.0.0.1:6128/api/tl_back
+curl -X POST http://127.0.0.1:6128/api/rewind/back
 ```
 
-**Response**: `200 application/json` — `{"ok":true}`
+**Using rewind for debugging** (notably for AI agents): the default setting —
+one snapshot every 10 frames — is meant for rewinding a game, and each step back
+jumps 0.2 s. To go back in time frame by frame, set the step to **1 frame** and
+size the buffer for the window you need to analyse:
+
+```bash
+curl -X POST http://127.0.0.1:6128/api/config \
+     -d '{"rw_enabled":true,"rw_interval":1,"rw_slots":300}'   # ~6 s of history, ~500 MB RAM
+```
+
+Let the program run up to (or past) the moment of interest, pause
+(`{"paused":true}`), then call `POST /api/rewind/back` repeatedly, inspecting the
+machine at each step (`GET /api/state`, `GET /api/ram`, `GET /api/history`,
+screenshots). Keep `rw_slots` moderate: every snapshot costs ~1.6 MB.
+
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
 
 ---
 
@@ -1703,7 +1867,7 @@ curl -X POST 'http://127.0.0.1:6128/api/raster_bp?x=256&y=120'
 curl -X POST 'http://127.0.0.1:6128/api/raster_bp?enable=0'
 ```
 
-**Response**: `200 application/json` — `{"ok":true}`  
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`  
 **Error**: `400 application/json` — `{"error":"query parameter \"x\" must be between 0 and 65535","field":"x"}`
 
 ---
@@ -1724,12 +1888,48 @@ Changes the UI language.
 
 **Body**: `application/json` — `{"lang":"fr"}`
 
-**Response**: `200 application/json` — `{"ok":true}`  
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`  
 **Error**: `400 application/json` — `{"error":"invalid lang"}`
 
 ---
 
 ## Disk Endpoints
+
+### `GET /api/disk?drive=<0|1>`
+
+Scored/sorted catalog of the disk mounted on a drive, computed by the same
+disk-autorun heuristic that drives `--autorun`, Ctrl+drop, and the Qt/imgui
+"Drive A"/"Drive B" menu (see `doc/keyboard.md`'s sibling, the disk-autorun
+spec, for the heuristic itself). `catalog` is only populated for an `amsdos`
+disk; `cpm` and `unknown` disks always report an empty list.
+
+**Query parameters**:
+
+| Parameter | Type | Default | Effect |
+|---|---|---|---|
+| `drive` | integer | `0` | Drive to read, `0` (A) or `1` (B) |
+
+**Response**: `200 application/json`
+
+```json
+{
+  "drive": 0,
+  "type": "amsdos",
+  "catalog": [
+    {"name": "GAME", "ext": "BIN", "hidden": false, "read_only": false, "score": 110},
+    {"name": "README", "ext": "TXT", "hidden": false, "read_only": false, "score": -1}
+  ]
+}
+```
+
+`type` is one of `"amsdos"`, `"cpm"`, or `"unknown"` (no disk, or an
+unrecognized/corrupt catalog). `score` is only meaningful relative to other
+entries on the same disk — higher sorts first; it is not comparable across
+disks or across requests to different drives.
+
+**Error**: `400 application/json` — `{"error":"field \"drive\" must be 0 (A) or 1 (B)"}`
+
+---
 
 ### `POST /api/disk`
 
@@ -1755,7 +1955,7 @@ curl -X POST http://127.0.0.1:6128/api/disk \
      -d '{"action":"save","drive":0}' -o disk_A.dsk
 ```
 
-**Create response**: `200 application/json` — `{"ok":true}`  
+**Create response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`  
 **Save response**: `200 application/octet-stream` — attachment `disk_A.dsk` (or `disk_B.dsk`)  
 **Save error** (no disk or failed): `500 application/json` — `{"error":"no disk or save failed"}`
 
@@ -1763,7 +1963,7 @@ curl -X POST http://127.0.0.1:6128/api/disk \
 
 ## Media Loading
 
-### `POST /api/media?name=<filename>&drive=<0|1>`
+### `POST /api/media?name=<filename>&drive=<0|1>&crtc=<keep|sna>`
 
 Loads a media file into the emulator from the raw request body — the SNA/DSK/
 HFE/IPF/CPR/CRO/BIN counterpart of drag-and-drop or the frontend's `Ctrl+O`
@@ -1781,11 +1981,13 @@ by extension (see below).
 |---|---|---|---|
 | `name` | string (URL-encoded) | — | Filename, e.g. `game.dsk`. Required for `.bin`/`.amsdos`; used to label the loaded media otherwise. |
 | `drive` | `0` or `1` | `0` | Target floppy drive for DSK/HFE/IPF images (A/B) |
+| `crtc` | `keep` or `sna` | `sna` | SNA only. A v3 snapshot names its CRTC type (byte `0xA4`) and loading it switches the machine to it. `keep` puts back the CRTC emulated before the load — so `POST /api/config {"crtc_type":N}` then `?crtc=keep` runs the snapshot on CRTC N without a hard reset. Only within the same side of the Plus boundary: CRTC 3 (Plus ASIC) and 0/1/2/4 (classic) do not mix; across it the snapshot's CRTC is used and a warning is logged. Read the outcome in `emu.crtc_type` once `emu.applied_cmd_seq` reaches the `cmd_seq`. |
 
 Like the other mutating routes, the request only enqueues the load; it is
 applied on the main thread at the next loop iteration (`Core_*` calls are not
 safe from the web server's thread). The response confirms the upload was
-queued, not that the load succeeded — check the application log, or a
+queued, not that the load succeeded — wait for `emu.applied_cmd_seq` to reach
+the returned `cmd_seq`, then check the application log, or a
 follow-up `GET /api/state` / `GET /api/fdc` (disk activity) or `GET
 /api/basic_state` (SNA restores BASIC state) to confirm the effect.
 
@@ -1798,7 +2000,7 @@ Supported formats and how each is detected:
 | `.hfe` | content (`HXCPICFE` magic) | Inserted into `drive` |
 | `.ipf` | content (`CAPS` magic) | Inserted into `drive` |
 | `.cpr` cartridge | content (`RIFF...AMS` magic) | Loaded as a standard cartridge |
-| `.cro` ROM set | content (`RIFF...CRO ` magic) | Triggers a hard reset |
+| `.cro` ROM container | content (`RIFF...CRO ` magic) | Validated as a whole first: an invalid file loads nothing (the response is still `ok`, the log names the error). A CRO with cartridge banks replaces the cartridge and switches a classic model to a 6128+; one without banks adds its ROMs. Hard reset afterwards |
 | `.bin`/`.amsdos` | **filename extension**, not content | AMSDOS-header binaries load directly; a headerless raw binary needs an explicit load address via `name=game@4000.bin` (optionally `@ENTRY`), e.g. `name=game@4000@4000.bin`. Addresses are four hex digits, flat 16-bit — no `Bnn:` prefix (its `:` is illegal in a Windows filename). The Qt/imgui **Save binary file** dialog writes names in this same form |
 | anything else (including `.cdt` tape) | fallback — no signature matched | **Known limitation**: unlike `.bin`/`.amsdos`, `.cdt` has no content signature and is *not* routed by filename extension either — the `name=` hint only special-cases `.bin`/`.amsdos`. A `.cdt` posted here currently falls through to the raw-binary path and will not load as a tape. This also affects SDL2/Qt drag-and-drop, not just this endpoint; tracked separately, not fixed by this doc update. |
 
@@ -1819,7 +2021,7 @@ curl -X POST 'http://127.0.0.1:6128/api/media?name=game@4000.bin' \
      --data-binary @game.bin
 ```
 
-**Response**: `200 application/json` — `{"ok":true}`
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
 **Error** (empty body): `400 application/json` — `{"error":"empty body: expected the raw media file bytes"}`
 
 **Native-transport only**: this endpoint requires the socket server (SDL2/Qt/
@@ -1851,7 +2053,7 @@ curl -X POST http://127.0.0.1:6128/api/keymap \
      -d '{"kc":"0x61","vk":1,"vk_s":1,"nomod":false}'
 ```
 
-**Response**: `200 application/json` — `{"ok":true}`  
+**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`  
 **Error**: `400 application/json` — e.g. `{"error":"missing field \"kc\": the platform keycode to remap","field":"kc"}` (see "Request bodies and errors" above)
 
 ---
@@ -1871,13 +2073,13 @@ curl -X POST http://127.0.0.1:6128/api/keymap \
 | POST | `/api/z80` | Write Z80 registers (partial update) |
 | GET | `/api/ga` | Gate Array registers only |
 | GET | `/api/psg` | PSG registers only |
-| GET | `/api/fdc` | FDC registers only |
+| GET | `/api/fdc` | FDC registers + per-drive mechanical state |
 | GET | `/api/keymatrix` | Raw 10-row CPC keyboard matrix |
 | GET | `/api/crtc` | CRTC register/counter snapshot |
 | GET | `/api/asic/sprites` | CPC+ ASIC hardware sprites (position, zoom, pixel bitmap); 400 on non-CPC+ |
 | GET | `/api/asic/palette` | CPC+ ASIC sprite ink palette (16 entries); 400 on non-CPC+ |
 | GET | `/api/config` | Current emulator configuration |
-| POST | `/api/config` | Change model, CRTC, language, reset, pause, keyboard mapping |
+| POST | `/api/config` | Change model, CRTC, language, reset, pause, keyboard mapping, rewind |
 | POST | `/api/quit` | Orderly app shutdown (flushes disk autosave + config) |
 | GET | `/api/lang` | Current UI language (`en`/`fr`/`es`/`de`) |
 | POST | `/api/lang` | Change UI language |
@@ -1886,19 +2088,21 @@ curl -X POST http://127.0.0.1:6128/api/keymap \
 | POST | `/api/exec` | Redirect Z80 PC |
 | POST | `/api/step` | Execute one Z80 instruction, then pause |
 | POST | `/api/z80_bp` | Set/clear Z80 PC breakpoints |
-| GET | `/api/history` | Last 20 executed Z80 instructions |
+| GET | `/api/history` | Last executed Z80 instructions (depth set by `history_size`) |
 | GET | `/api/codemap` | Executed-instruction bitmap (code/data zones) |
 | DELETE | `/api/codemap` | Reset the executed-instruction bitmap + history |
 | GET | `/api/memmap` | ROM/RAM mapping per 16 KB region + RAM banking config |
+| GET | `/api/rommap` | ROM catalog: loaded firmware/extension/cartridge-bank ROMs and their sources |
 | GET | `/api/screenshot[?crop=N&live=N&full=N]` | Current frame as a PNG (+ beam/crop headers) |
 | GET | `/api/render` | Current CRT monitor preset, screen type, shader params |
 | POST | `/api/render` | Change monitor preset / screen type / CRT shader params |
 | GET | `/api/audio` | Audio snapshot (last N frames from emulator buffer) |
 | GET | `/api/audio/record[?format=wav]` | Ring-buffer audio window (JSON or WAV download) |
 | GET | `/api/audio/devices` | List audio output devices and the current selection |
+| GET | `/api/disk?drive=<0\|1>` | Scored/sorted catalog of the disk mounted on a drive (disk-autorun heuristic) |
 | POST | `/api/disk` | Create blank disk or save/download current disk image |
 | POST | `/api/media?name=N&drive=N` | Load a SNA/DSK/HFE/IPF/CPR/CRO/BIN file from the request body (`.cdt` currently unsupported, see endpoint docs) |
-| POST | `/api/tl_back` | Navigate the timelapse one step back |
+| POST | `/api/rewind/back` | Navigate the rewind one step back |
 | GET | `/api/beam[?crop=N]` | Current CTM beam position + crop rectangle |
 | POST | `/api/raster_bp?x=N&y=N&enable=N` | Arm/disarm a raster breakpoint |
 | POST | `/api/keytype` | Send text to the emulator (autotype) |
