@@ -37,7 +37,7 @@ extern "C" {
 #endif
 
 #define CORE_GREFFON_ABI_MAJOR		1		// Incompatible : le core refuse le greffon si différent
-#define CORE_GREFFON_ABI_MINOR		1		// Compatible : ajouts de champs/capacités
+#define CORE_GREFFON_ABI_MINOR		2		// Compatible : ajouts de champs/capacités
 
 // Noms des points d'entrée exportés par un greffon (résolus par dlsym/GetProcAddress)
 #define CORE_GREFFON_SYM_DESCRIBE	"CoreGreffon_Describe"
@@ -86,6 +86,11 @@ extern "C" {
 #define CORE_GREFFON_CONN_PRINTER		0x00000004u	// Port imprimante (sortie ; busy en entrée)
 #define CORE_GREFFON_CONN_JOYSTICK0		0x00000008u	// Port joystick 0 (entrée)
 #define CORE_GREFFON_CONN_JOYSTICK1		0x00000010u	// Port joystick 1 (entrée)
+// Signal CURSOR du CRTC (broche du connecteur d'extension, ABI 1.2) : `cursor` est appelé à chaque front
+// montant, au cycle exact. Rien d'autre du CRTC n'est exposé. Le signal suit la définition du 6845 : adresse
+// MA = R14/R15, ligne de trame entre R10 (début) et R11 (fin), clignotement R10 bits 6-5, et seulement
+// pendant l'affichage (DISPTMG). Gamme Plus : le CRTC 3/4 fournit le même signal.
+#define CORE_GREFFON_CONN_CURSOR		0x00000020u
 
 // Lignes du Z80 qu'un greffon peut piloter (CoreGreffonHost.set_line)
 // INT et WAIT sont câblées en OU avec le Gate Array (et entre greffons) : une ligne est basse tant
@@ -282,6 +287,10 @@ typedef struct CoreGreffonCallbacks
 	// Temps émulé : appelé après chaque instruction du Z80 tant que le greffon est attaché (permet de
 	// lever INT au bon cycle sans accès au bus, p.ex. timers du CTC). NULL = non souhaité, sans aucun coût.
 	void				(*tick)(void* ctx, uint64_t cycle);
+
+	// --- CONN_CURSOR (ABI 1.2) ---
+	// Front montant du signal CURSOR du CRTC au cycle `cycle` (T-states depuis le reset, résolution 1 µs).
+	void				(*cursor)(void* ctx, uint64_t cycle);
 } CoreGreffonCallbacks;
 
 // -----------------------------------------------------------------------------

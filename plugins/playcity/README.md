@@ -18,7 +18,7 @@ Le CTC est réécrit d'après le comportement du MK3882 (priorités, « en servi
 ## Organisation
 
 - `ctc.{c,h}`, `ymz294.{c,h}`, `playcity_card.{c,h}` : la carte, sans ABI ni SDL (testée seule).
-- `playcity.c` : glue ABI du core (ABI 1.1 : `int_ack`, `tick`) + sortie SDL2.
+- `playcity.c` : glue ABI du core (ABI 1.2 : `int_ack`, `tick`, `cursor`) + sortie SDL2.
 - `tests/` : `meson test`. Test de bout en bout contre le core : `PLAYCITY_PLUGIN=.../playcity.so` dans `amspirit-core-tests "[playcity]"`.
 
 ## Approximations connues
@@ -29,5 +29,6 @@ Le CTC est réécrit d'après le comportement du MK3882 (priorités, « en servi
 - **Horloge des YMZ** : débit des fronts = 4 MHz x (1 - 0,5 / période de ZC/TO0), qui reproduit la table du wiki ;
   la gigue réelle des fronts n'est pas modélisée.
 - **Gauche/droite** : le wiki et ACE disent `&F884` = droite, le MiSTer l'inverse. Paramètre `swap_channels`.
-- **CURSOR** (canal 1 -> NMI) : la carte sait le traiter (`pc_cursor`), mais le core ne fournit pas encore le signal.
+- **CURSOR** (canal 1 -> NMI) : fourni par le core (connecteur `CORE_GREFFON_CONN_CURSOR`) selon la définition du 6845 ;
+  l'emplacement exact de l'impulsion par rapport à la NMI de la vraie carte n'est pas validé sur matériel.
 - La polarité du front (bit 4 du mot de contrôle) est ignorée ; non validé à l'oreille ni sur Windows/macOS.

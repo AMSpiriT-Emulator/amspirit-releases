@@ -2,7 +2,7 @@
 // Greffon PlayCity (AmspiriT) : Z84C30 (CTC) + 2 x YMZ294 sur le connecteur d'extension, son SDL2.
 //
 //   - Connecteur : extension. &F880-&F88F / &F980-&F98F (CTC, YMZ) et &F8FF (reset), cf. playcity_card.h.
-//   - Lignes : INT (CTC, vecteur IM 2 via int_ack), NMI (canal 1 ; entrée CURSOR pas encore câblée).
+//   - Lignes : INT (CTC, vecteur IM 2 via int_ack), NMI (canal 1, dont l'entrée est le signal CURSOR du CRTC).
 //   - Le temps vient de tick() : le CTC et les timbres avancent à chaque instruction du Z80.
 //   - Le son est produit ici (le core ne sait rien d'audio, ADR 0003) ; SDL2 ouvre son propre périphérique.
 //
@@ -53,7 +53,7 @@ static const CoreGreffonIORange k_io[] = {
 
 static const CoreGreffonDesc k_desc = { sizeof(CoreGreffonDesc), CORE_GREFFON_ABI_MAJOR, CORE_GREFFON_ABI_MINOR,
 	"PlayCity", "0.1.0", "Z84C30 (CTC) + 2 x YMZ294 : 6 voix stereo, interruptions IM 2 / NMI, sortie SDL2",
-	CORE_GREFFON_CONN_EXPANSION, 0, k_io, 2, 0, k_params, 4 };
+	CORE_GREFFON_CONN_EXPANSION | CORE_GREFFON_CONN_CURSOR, 0, k_io, 2, 0, k_params, 4 };
 
 CORE_GREFFON_EXPORT const CoreGreffonDesc* CoreGreffon_Describe(void) { return &k_desc; }
 
@@ -86,6 +86,8 @@ static int32_t cb_int_ack(void* ctx, uint64_t cycle, uint8_t* vector)
 	g->int_acks += (uint64_t)(r != 0);
 	return r;
 }
+
+static void cb_cursor(void* ctx, uint64_t cycle) { pc_cursor(&((Plugin*)ctx)->pc, cycle); }
 
 static void cb_tick(void* ctx, uint64_t cycle) { pc_tick(&((Plugin*)ctx)->pc, cycle); }
 
@@ -146,7 +148,7 @@ CORE_GREFFON_EXPORT int32_t CoreGreffon_Attach(const CoreGreffonHost* host, cons
 {
 	if (!host || !callbacks || !ctx) return CORE_GREFFON_ERR_ARG;
 	if (host->abi_major != CORE_GREFFON_ABI_MAJOR) return CORE_GREFFON_ERR_ABI;
-	if (host->abi_minor < 1 || !host->set_line) return CORE_GREFFON_ERR_ABI;		// int_ack / tick : ABI 1.1
+	if (host->abi_minor < 2 || !host->set_line) return CORE_GREFFON_ERR_ABI;		// int_ack / tick : ABI 1.1, cursor : 1.2
 
 	Plugin* g = (Plugin*)calloc(1, sizeof *g);
 	if (!g) return CORE_GREFFON_ERR_IO;
@@ -172,6 +174,7 @@ CORE_GREFFON_EXPORT int32_t CoreGreffon_Attach(const CoreGreffonHost* host, cons
 	callbacks->io_out = cb_io_out;
 	callbacks->int_ack = cb_int_ack;
 	callbacks->tick = cb_tick;
+	callbacks->cursor = cb_cursor;
 	callbacks->set_param = cb_set_param;
 	callbacks->save_state = cb_save_state;
 	callbacks->load_state = cb_load_state;
