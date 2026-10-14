@@ -2,40 +2,33 @@
 // Aucune dépendance SDL ni core : testable seul.
 //
 // Le producteur (fil d'émulation) appelle db_write / db_anchor ; le consommateur (fil audio)
-// appelle db_render. File SPSC sans verrou entre les deux.
+// appelle db_render. La file, le préremplissage, le saut vers le récent et le maintien sur
+// underrun viennent du tronc commun (plugin_audio) ; ce module ne garde que la conversion
+// temps -> échantillons et le couplage alternatif de la sortie.
 #pragma once
 #include <stdint.h>
 #include <stdatomic.h>
+#include "plugin_audio.h"
 
 #define DB_CLOCK_HZ		4000000.0
-#define DB_RING_SIZE	65536u				// échantillons (puissance de 2)
 
 typedef struct DbDsp
 {
-	// --- configuration (fixée avant le démarrage du fil audio) ---
+	// --- file (tronc commun), mono, volume 1 : le volume est appliqué par db_render ---
+	GfAudioStream	stream;
 	uint32_t		rate;					// Hz de sortie
 	double			cps;					// T-states par échantillon
-	uint32_t		prefill;				// échantillons à accumuler avant de (re)démarrer la lecture
-	uint32_t		maxfill;				// au-delà, la lecture saute vers le récent (turbo, pause) : latence bornée
 
 	// --- producteur ---
 	uint64_t		next;					// indice du prochain échantillon à produire
 	double			t;						// T-states : début de la zone pas encore intégrée
 	double			acc;					// intégrale de la valeur dans la fenêtre courante
 	uint8_t			value;					// niveau courant du CNA (octet brut du port imprimante)
-	uint64_t		produced, dropped, events, anchors;
+	uint64_t		events, anchors;
 
 	// --- consommateur ---
-	float			hold;					// dernier échantillon sorti (maintenu hors lecture)
 	float			hp_x, hp_y, hp_r;		// filtre passe-haut (couplage AC de la sortie réelle)
-	uint64_t		underruns, skipped;
-	uint32_t		wait;					// échantillons joués pendant qu'on attend le préremplissage
 	_Atomic float	volume;					// 0..1
-
-	// --- partagé ---
-	_Atomic uint32_t	wr, rd;
-	_Atomic int			buffering;			// 1 = le consommateur attend `prefill` échantillons
-	float				ring[DB_RING_SIZE];
 } DbDsp;
 
 void db_init(DbDsp* d, uint32_t rate, uint32_t latency_ms, float volume);

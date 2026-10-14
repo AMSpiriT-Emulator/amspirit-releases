@@ -28,7 +28,7 @@ static void test_cadence(void)
 	DbDsp* d = mk(44100, 10);
 	db_anchor(d, 0, 0x80);
 	run_to(d, 0, 4000000, 0x80);
-	CHECK(d->produced >= 44099 && d->produced <= 44100 + 1);
+	CHECK(d->stream.pushed >= 44099 && d->stream.pushed <= 44100 + 1);
 	free(d);
 }
 
@@ -78,8 +78,8 @@ static void test_prefill_and_underrun(void)
 	db_write(e, 0, 0xFF);
 	db_write(e, 200000, 0xFF);							// 50 ms seulement
 	db_render(e, out, 256);
-	CHECK(atomic_load(&e->rd) == 0);					// rien consommé
-	CHECK(atomic_load(&e->buffering) == 1);
+	CHECK(atomic_load(&e->stream.rd) == 0);					// rien consommé
+	CHECK(atomic_load(&e->stream.buffering) == 1);
 	free(d); free(e);
 }
 
@@ -92,10 +92,10 @@ static void test_gap_reanchor(void)
 	db_write(d, 100000, 0xC0);							// 25 ms : préremplissage atteint
 	static float out[4096];
 	db_render(d, out, 4096);							// tout consommé, rebuffering
-	CHECK(atomic_load(&d->buffering) == 1);
-	const uint64_t before = d->produced;
+	CHECK(atomic_load(&d->stream.buffering) == 1);
+	const uint64_t before = d->stream.pushed;
 	db_write(d, 100000 + 8000000, 0x40);				// 2 s plus tard
-	CHECK(d->produced - before < 100);					// pas 88200 échantillons de remplissage
+	CHECK(d->stream.pushed - before < 100);					// pas 88200 échantillons de remplissage
 	CHECK(d->anchors >= 2);
 	free(d);
 }
@@ -106,11 +106,11 @@ static void test_time_backwards(void)
 	DbDsp* d = mk(44100, 20);
 	db_anchor(d, 0, 0x80);
 	run_to(d, 0, 4000000, 0x10);
-	const uint64_t p = d->produced;
+	const uint64_t p = d->stream.pushed;
 	db_write(d, 1000, 0x20);
-	CHECK(d->produced == p);
+	CHECK(d->stream.pushed == p);
 	db_write(d, 5000, 0x30);
-	CHECK(d->produced - p >= 43 && d->produced - p <= 45);	// 4000 T-states depuis 1000 = ~44 echantillons
+	CHECK(d->stream.pushed - p >= 43 && d->stream.pushed - p <= 45);	// 4000 T-states depuis 1000 = ~44 echantillons
 	free(d);
 }
 
@@ -120,8 +120,8 @@ static void test_overflow(void)
 	DbDsp* d = mk(44100, 20);
 	db_anchor(d, 0, 0x80);
 	run_to(d, 0, 4000000ull * 5, 0x80);					// 5 s sans consommateur
-	CHECK(d->dropped > 0);
-	CHECK(atomic_load(&d->wr) - atomic_load(&d->rd) <= DB_RING_SIZE);
+	CHECK(d->stream.dropped > 0);
+	CHECK(atomic_load(&d->stream.wr) - atomic_load(&d->stream.rd) <= GF_AUDIO_RING_FRAMES);
 	free(d);
 }
 
@@ -137,12 +137,12 @@ static void test_short_burst(void)
 	db_write(d, 160000, 0x80);
 	static float out[8192];
 	db_render(d, out, 4096);							// ~93 ms réels : le préremplissage est dépassé
-	CHECK(atomic_load(&d->rd) > 0);						// la lecture a démarré
+	CHECK(atomic_load(&d->stream.rd) > 0);						// la lecture a démarré
 	db_render(d, out, 4096);							// le reste est lu, file vide
-	CHECK(atomic_load(&d->buffering) == 1);
-	const uint64_t before = d->produced;
+	CHECK(atomic_load(&d->stream.buffering) == 1);
+	const uint64_t before = d->stream.pushed;
 	db_write(d, 160000 + 4000000, 0xFF);				// 1 s plus tard
-	CHECK(d->produced - before < 100);
+	CHECK(d->stream.pushed - before < 100);
 	free(d);
 }
 
@@ -154,8 +154,8 @@ static void test_turbo_bounded(void)
 	run_to(d, 0, 4000000ull * 1, 0x80);					// 1 s émulée d'un coup
 	static float out[512];
 	db_render(d, out, 512);
-	CHECK(atomic_load(&d->wr) - atomic_load(&d->rd) <= d->maxfill);
-	CHECK(d->skipped > 0);
+	CHECK(atomic_load(&d->stream.wr) - atomic_load(&d->stream.rd) <= d->stream.maxfill);
+	CHECK(d->stream.skipped > 0);
 	free(d);
 }
 

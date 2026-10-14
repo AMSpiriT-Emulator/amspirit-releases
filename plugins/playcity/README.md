@@ -1,4 +1,4 @@
-# PlayCity (greffon AmspiriT)
+# PlayCity (plugin AmspiriT)
 
 Carte d'extension de TotO : un **Z84C30** (CTC) et **deux YMZ294** (6 voix stéréo). Connecteur d'extension.
 
@@ -29,6 +29,6 @@ Le CTC est réécrit d'après le comportement du MK3882 (priorités, « en servi
 - **Horloge des YMZ** : débit des fronts = 4 MHz x (1 - 0,5 / période de ZC/TO0), qui reproduit la table du wiki ;
   la gigue réelle des fronts n'est pas modélisée.
 - **Gauche/droite** : le wiki et ACE disent `&F884` = droite, le MiSTer l'inverse. Paramètre `swap_channels`.
-- **CURSOR** (canal 1 -> NMI) : fourni par le core (connecteur `CORE_GREFFON_CONN_CURSOR`) selon la définition du 6845 ;
+- **CURSOR** (canal 1 -> NMI) : fourni par le core (connecteur `CORE_PLUGIN_CONN_CURSOR`) selon la définition du 6845 ;
   l'emplacement exact de l'impulsion par rapport à la NMI de la vraie carte n'est pas validé sur matériel.
 - La polarité du front (bit 4 du mot de contrôle) est ignorée ; non validé à l'oreille ni sur Windows/macOS.

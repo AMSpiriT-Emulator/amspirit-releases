@@ -1,4 +1,4 @@
-#include "greffon_clock.h"
+#include "plugin_clock.h"
 #include "check.h"
 
 static void one_second_gives_rate_samples(void)

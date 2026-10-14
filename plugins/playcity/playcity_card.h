@@ -12,8 +12,8 @@
 #include <stdint.h>
 #include "ctc.h"
 #include "ymz294.h"
-#include "greffon_audio.h"
-#include "greffon_clock.h"
+#include "plugin_audio.h"
+#include "plugin_clock.h"
 
 typedef struct PcLines
 {

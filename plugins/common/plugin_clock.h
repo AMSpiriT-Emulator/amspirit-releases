@@ -1,5 +1,5 @@
 // Horloge d'échantillons : convertit le temps émulé (T-states) en nombre d'échantillons audio dus,
-// sans dérive (arithmétique entière exacte). Un greffon audio l'interroge depuis tick().
+// sans dérive (arithmétique entière exacte). Un plugin audio l'interroge depuis tick().
 #pragma once
 #include <stdint.h>
 

@@ -1,4 +1,4 @@
-#include "greffon_audio.h"
+#include "plugin_audio.h"
 #include "check.h"
 #include <stdlib.h>
 #include <math.h>

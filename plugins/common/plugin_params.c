@@ -1,4 +1,4 @@
-#include "greffon_params.h"
+#include "plugin_params.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -20,16 +20,16 @@ static int parse_int(const char* s, int64_t* out)
 	return 1;
 }
 
-static int valid(const CoreGreffonParam* d, const char* value)
+static int valid(const CorePluginParam* d, const char* value)
 {
 	int64_t v;
 	switch (d->type)
 	{
-	case CORE_GREFFON_PARAM_BOOL:
+	case CORE_PLUGIN_PARAM_BOOL:
 		return strcmp(value, "0") == 0 || strcmp(value, "1") == 0;
-	case CORE_GREFFON_PARAM_INT:
+	case CORE_PLUGIN_PARAM_INT:
 		return parse_int(value, &v) && v >= d->int_min && v <= d->int_max;
-	case CORE_GREFFON_PARAM_ENUM:
+	case CORE_PLUGIN_PARAM_ENUM:
 		for (uint32_t i = 0; i < d->choice_count; ++i)
 			if (strcmp(d->choices[i], value) == 0)
 				return 1;
@@ -39,36 +39,36 @@ static int valid(const CoreGreffonParam* d, const char* value)
 	}
 }
 
-int32_t gf_params_init(GfParams* p, const CoreGreffonParam* const* decl, uint32_t count)
+int32_t gf_params_init(GfParams* p, const CorePluginParam* const* decl, uint32_t count)
 {
 	if (!p || (count && !decl) || count > GF_PARAMS_MAX)
-		return CORE_GREFFON_ERR_ARG;
+		return CORE_PLUGIN_ERR_ARG;
 	p->decl = decl;
 	p->count = count;
 	for (uint32_t i = 0; i < count; ++i)
 	{
 		const char* def = decl[i]->def ? decl[i]->def : "";
 		if (strlen(def) >= GF_VALUE_MAX)
-			return CORE_GREFFON_ERR_ARG;
+			return CORE_PLUGIN_ERR_ARG;
 		strcpy(p->value[i], def);
 	}
-	return CORE_GREFFON_OK;
+	return CORE_PLUGIN_OK;
 }
 
 static int32_t set(GfParams* p, const char* key, const char* value, int live, int check_apply)
 {
 	if (!p || !key || !value)
-		return CORE_GREFFON_ERR_ARG;
+		return CORE_PLUGIN_ERR_ARG;
 	const int i = find(p, key);
 	if (i < 0)
-		return CORE_GREFFON_ERR_UNKNOWN_KEY;
-	const CoreGreffonParam* d = p->decl[i];
-	if (check_apply && live && d->apply != CORE_GREFFON_APPLY_LIVE)
-		return CORE_GREFFON_ERR_STATE;
+		return CORE_PLUGIN_ERR_UNKNOWN_KEY;
+	const CorePluginParam* d = p->decl[i];
+	if (check_apply && live && d->apply != CORE_PLUGIN_APPLY_LIVE)
+		return CORE_PLUGIN_ERR_STATE;
 	if (strlen(value) >= GF_VALUE_MAX || !valid(d, value))
-		return CORE_GREFFON_ERR_BAD_VALUE;
+		return CORE_PLUGIN_ERR_BAD_VALUE;
 	strcpy(p->value[i], value);
-	return CORE_GREFFON_OK;
+	return CORE_PLUGIN_OK;
 }
 
 int32_t gf_params_set(GfParams* p, const char* key, const char* value, int live)
@@ -76,15 +76,15 @@ int32_t gf_params_set(GfParams* p, const char* key, const char* value, int live)
 	return set(p, key, value, live, 1);
 }
 
-int32_t gf_params_load_initial(GfParams* p, const CoreGreffonKV* kv, uint32_t count)
+int32_t gf_params_load_initial(GfParams* p, const CorePluginKV* kv, uint32_t count)
 {
 	for (uint32_t i = 0; i < count; ++i)
 	{
 		const int32_t rc = set(p, kv[i].key, kv[i].value, 0, 0);
-		if (rc != CORE_GREFFON_OK && rc != CORE_GREFFON_ERR_UNKNOWN_KEY)
+		if (rc != CORE_PLUGIN_OK && rc != CORE_PLUGIN_ERR_UNKNOWN_KEY)
 			return rc;
 	}
-	return CORE_GREFFON_OK;
+	return CORE_PLUGIN_OK;
 }
 
 int64_t gf_params_int(const GfParams* p, const char* key)

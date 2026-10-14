@@ -1,4 +1,4 @@
-#include "greffon_clock.h"
+#include "plugin_clock.h"
 
 void gf_clock_init(GfSampleClock* c, uint32_t clock_hz, uint32_t rate, uint64_t cycle)
 {

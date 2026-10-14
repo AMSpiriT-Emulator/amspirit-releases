@@ -1,6 +1,6 @@
 ; z80: assembler=fantams buildmode=sna base=cpc6128-en
 ; ============================================================================
-; Test de synchro PSG (sortie interne) / Digiblaster (greffon)
+; Test de synchro PSG (sortie interne) / Digiblaster (plugin)
 ;
 ; Toutes les 50 trames (1 s), un "clic" de 40 ms demarre au meme instant :
 ;   - sur le PSG   : tone ~1 kHz, voie A
@@ -8,7 +8,7 @@
 ; Le border passe en blanc pendant le clic.
 ;
 ; A l'oreille : un seul clic net = synchro correcte. Un "flam" (double
-; attaque) ou un retard qui grandit/diminue au fil du temps = le greffon
+; attaque) ou un retard qui grandit/diminue au fil du temps = le plugin
 ; derive. Dans le mixeur systeme, couper tour a tour une des deux entrees
 ; de lite pour entendre chaque source seule.
 ;

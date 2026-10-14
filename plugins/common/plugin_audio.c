@@ -1,4 +1,4 @@
-#include "greffon_audio.h"
+#include "plugin_audio.h"
 #include <string.h>
 
 #define MASK	(GF_AUDIO_RING_FRAMES - 1)

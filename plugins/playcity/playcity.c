@@ -1,16 +1,16 @@
 // ============================================================================
-// Greffon PlayCity (AmspiriT) : Z84C30 (CTC) + 2 x YMZ294 sur le connecteur d'extension, son SDL2.
+// Plugin PlayCity (AmspiriT) : Z84C30 (CTC) + 2 x YMZ294 sur le connecteur d'extension, son SDL2.
 //
 //   - Connecteur : extension. &F880-&F88F / &F980-&F98F (CTC, YMZ) et &F8FF (reset), cf. playcity_card.h.
 //   - Lignes : INT (CTC, vecteur IM 2 via int_ack), NMI (canal 1, dont l'entrée est le signal CURSOR du CRTC).
 //   - Le temps vient de tick() : le CTC et les timbres avancent à chaque instruction du Z80.
 //   - Le son est produit ici (le core ne sait rien d'audio, ADR 0003) ; SDL2 ouvre son propre périphérique.
 //
-// N'inclut que l'en-tête public de l'ABI et le tronc commun des greffons.
+// N'inclut que l'en-tête public de l'ABI et le tronc commun des plugins.
 // ============================================================================
-#include "Core_Greffon.h"
-#include "greffon_params.h"
-#include "greffon_sdl_audio.h"
+#include "Core_Plugin.h"
+#include "plugin_params.h"
+#include "plugin_sdl_audio.h"
 #include "playcity_card.h"
 #include <stdlib.h>
 #include <string.h>
@@ -24,7 +24,7 @@ typedef struct PcStats					// Lisible par les tests via PlayCity_Stats() (dlsym)
 
 typedef struct Plugin
 {
-	const CoreGreffonHost*	host;
+	const CorePluginHost*	host;
 	GfParams				params;
 	GfSdlAudio				sdl;
 	uint64_t				int_acks;
@@ -35,38 +35,38 @@ typedef struct Plugin
 static Plugin* s_inst;					// pour PlayCity_Stats
 
 static const char* const k_rates[] = { "44100", "48000" };
-static const CoreGreffonParam p_volume = { sizeof(CoreGreffonParam), "volume", "Volume (%)", CORE_GREFFON_PARAM_INT,
-	CORE_GREFFON_APPLY_LIVE, "80", 0, 100, NULL, 0, NULL };
-static const CoreGreffonParam p_rate = { sizeof(CoreGreffonParam), "sample_rate", "Frequence d'echantillonnage (Hz)", CORE_GREFFON_PARAM_ENUM,
-	CORE_GREFFON_APPLY_AT_ATTACH, "44100", 0, 0, k_rates, 2, NULL };
-static const CoreGreffonParam p_latency = { sizeof(CoreGreffonParam), "latency_ms", "Latence audio (ms)", CORE_GREFFON_PARAM_INT,
-	CORE_GREFFON_APPLY_AT_ATTACH, "60", 10, 500, NULL, 0, NULL };
-static const CoreGreffonParam p_swap = { sizeof(CoreGreffonParam), "swap_channels", "Inverser gauche/droite", CORE_GREFFON_PARAM_BOOL,
-	CORE_GREFFON_APPLY_AT_ATTACH, "0", 0, 1, NULL, 0, NULL };
-static const CoreGreffonParam* const k_params[] = { &p_volume, &p_rate, &p_latency, &p_swap };
+static const CorePluginParam p_volume = { sizeof(CorePluginParam), "volume", "Volume (%)", CORE_PLUGIN_PARAM_INT,
+	CORE_PLUGIN_APPLY_LIVE, "80", 0, 100, NULL, 0, NULL };
+static const CorePluginParam p_rate = { sizeof(CorePluginParam), "sample_rate", "Frequence d'echantillonnage (Hz)", CORE_PLUGIN_PARAM_ENUM,
+	CORE_PLUGIN_APPLY_AT_ATTACH, "44100", 0, 0, k_rates, 2, NULL };
+static const CorePluginParam p_latency = { sizeof(CorePluginParam), "latency_ms", "Latence audio (ms)", CORE_PLUGIN_PARAM_INT,
+	CORE_PLUGIN_APPLY_AT_ATTACH, "60", 10, 500, NULL, 0, NULL };
+static const CorePluginParam p_swap = { sizeof(CorePluginParam), "swap_channels", "Inverser gauche/droite", CORE_PLUGIN_PARAM_BOOL,
+	CORE_PLUGIN_APPLY_AT_ATTACH, "0", 0, 1, NULL, 0, NULL };
+static const CorePluginParam* const k_params[] = { &p_volume, &p_rate, &p_latency, &p_swap };
 
 // &F880-&F88F et &F980-&F98F : CTC et YMZ (le décodage fin est dans pc_io_*) ; &F8FF : reset
-static const CoreGreffonIORange k_io[] = {
-	{ 0xFEF0, 0xF880, CORE_GREFFON_DIR_IN | CORE_GREFFON_DIR_OUT },
-	{ 0xFFFF, 0xF8FF, CORE_GREFFON_DIR_OUT },
+static const CorePluginIORange k_io[] = {
+	{ 0xFEF0, 0xF880, CORE_PLUGIN_DIR_IN | CORE_PLUGIN_DIR_OUT },
+	{ 0xFFFF, 0xF8FF, CORE_PLUGIN_DIR_OUT },
 };
 
-static const CoreGreffonDesc k_desc = { sizeof(CoreGreffonDesc), CORE_GREFFON_ABI_MAJOR, CORE_GREFFON_ABI_MINOR,
+static const CorePluginDesc k_desc = { sizeof(CorePluginDesc), CORE_PLUGIN_ABI_MAJOR, CORE_PLUGIN_ABI_MINOR,
 	"PlayCity", "0.1.0", "Z84C30 (CTC) + 2 x YMZ294 : 6 voix stereo, interruptions IM 2 / NMI, sortie SDL2",
-	CORE_GREFFON_CONN_EXPANSION | CORE_GREFFON_CONN_CURSOR, 0, k_io, 2, 0, k_params, 4 };
+	CORE_PLUGIN_CONN_EXPANSION | CORE_PLUGIN_CONN_CURSOR, 0, k_io, 2, 0, k_params, 4 };
 
-CORE_GREFFON_EXPORT const CoreGreffonDesc* CoreGreffon_Describe(void) { return &k_desc; }
+CORE_PLUGIN_EXPORT const CorePluginDesc* CorePlugin_Describe(void) { return &k_desc; }
 
 static void line_int(void* user, int level)
 {
 	const Plugin* g = (const Plugin*)user;
-	g->host->set_line(g->host->host_ctx, CORE_GREFFON_LINE_INT, (uint32_t)level);
+	g->host->set_line(g->host->host_ctx, CORE_PLUGIN_LINE_INT, (uint32_t)level);
 }
 
 static void line_nmi(void* user, int level)
 {
 	const Plugin* g = (const Plugin*)user;
-	g->host->set_line(g->host->host_ctx, CORE_GREFFON_LINE_NMI, (uint32_t)level);
+	g->host->set_line(g->host->host_ctx, CORE_PLUGIN_LINE_NMI, (uint32_t)level);
 }
 
 static int32_t cb_io_in(void* ctx, uint16_t port, uint64_t cycle, uint8_t* data)
@@ -93,6 +93,11 @@ static void cb_tick(void* ctx, uint64_t cycle) { pc_tick(&((Plugin*)ctx)->pc, cy
 
 static void cb_reset(void* ctx, uint64_t cycle) { pc_reset(&((Plugin*)ctx)->pc, cycle); }
 
+static void render_stream(void* user, float* out, uint32_t frames)
+{
+	gf_audio_render((GfAudioStream*)user, out, frames);
+}
+
 static void cb_detach(void* ctx)
 {
 	Plugin* g = (Plugin*)ctx;
@@ -105,7 +110,7 @@ static int32_t cb_set_param(void* ctx, const char* key, const char* value)
 {
 	Plugin* g = (Plugin*)ctx;
 	const int32_t rc = gf_params_set(&g->params, key, value, 1);
-	if (rc == CORE_GREFFON_OK && strcmp(key, "volume") == 0)
+	if (rc == CORE_PLUGIN_OK && strcmp(key, "volume") == 0)
 		atomic_store(&g->stream.volume, (float)gf_params_int(&g->params, "volume") / 100.0f);
 	return rc;
 }
@@ -118,7 +123,7 @@ static int32_t cb_save_state(void* ctx, uint8_t* buffer, uint32_t capacity, uint
 {
 	const Plugin* g = (const Plugin*)ctx;
 	if (size_out) *size_out = sizeof(SavedState);
-	if (capacity < sizeof(SavedState)) return CORE_GREFFON_ERR_BUFFER;
+	if (capacity < sizeof(SavedState)) return CORE_PLUGIN_ERR_BUFFER;
 	SavedState st;
 	memset(&st, 0, sizeof st);
 	st.version = STATE_VERSION;
@@ -126,36 +131,36 @@ static int32_t cb_save_state(void* ctx, uint8_t* buffer, uint32_t capacity, uint
 	st.ymz[0] = g->pc.ymz[0];
 	st.ymz[1] = g->pc.ymz[1];
 	memcpy(buffer, &st, sizeof st);
-	return CORE_GREFFON_OK;
+	return CORE_PLUGIN_OK;
 }
 
 static int32_t cb_load_state(void* ctx, const uint8_t* buffer, uint32_t size)
 {
 	Plugin* g = (Plugin*)ctx;
 	SavedState st;
-	if (size != sizeof st) return CORE_GREFFON_ERR_BAD_VALUE;
+	if (size != sizeof st) return CORE_PLUGIN_ERR_BAD_VALUE;
 	memcpy(&st, buffer, sizeof st);
-	if (st.version != STATE_VERSION) return CORE_GREFFON_ERR_BAD_VALUE;
+	if (st.version != STATE_VERSION) return CORE_PLUGIN_ERR_BAD_VALUE;
 	g->pc.ctc = st.ctc;
 	g->pc.ymz[0] = st.ymz[0];
 	g->pc.ymz[1] = st.ymz[1];
 	g->pc.ymz[0].tick_left = g->pc.ymz[1].tick_left = 0.0;
-	return CORE_GREFFON_OK;
+	return CORE_PLUGIN_OK;
 }
 
-CORE_GREFFON_EXPORT int32_t CoreGreffon_Attach(const CoreGreffonHost* host, const CoreGreffonKV* initial,
-	uint32_t initial_count, CoreGreffonCallbacks* callbacks, void** ctx)
+CORE_PLUGIN_EXPORT int32_t CorePlugin_Attach(const CorePluginHost* host, const CorePluginKV* initial,
+	uint32_t initial_count, CorePluginCallbacks* callbacks, void** ctx)
 {
-	if (!host || !callbacks || !ctx) return CORE_GREFFON_ERR_ARG;
-	if (host->abi_major != CORE_GREFFON_ABI_MAJOR) return CORE_GREFFON_ERR_ABI;
-	if (host->abi_minor < 2 || !host->set_line) return CORE_GREFFON_ERR_ABI;		// int_ack / tick : ABI 1.1, cursor : 1.2
+	if (!host || !callbacks || !ctx) return CORE_PLUGIN_ERR_ARG;
+	if (host->abi_major != CORE_PLUGIN_ABI_MAJOR) return CORE_PLUGIN_ERR_ABI;
+	if (host->abi_minor < 2 || !host->set_line) return CORE_PLUGIN_ERR_ABI;		// int_ack / tick : ABI 1.1, cursor : 1.2
 
 	Plugin* g = (Plugin*)calloc(1, sizeof *g);
-	if (!g) return CORE_GREFFON_ERR_IO;
+	if (!g) return CORE_PLUGIN_ERR_IO;
 	g->host = host;
 	gf_params_init(&g->params, k_params, 4);
 	int32_t rc = gf_params_load_initial(&g->params, initial, initial_count);
-	if (rc != CORE_GREFFON_OK) { free(g); return rc; }
+	if (rc != CORE_PLUGIN_OK) { free(g); return rc; }
 
 	gf_audio_init(&g->stream, (uint32_t)gf_params_int(&g->params, "sample_rate"), 2,
 		(uint32_t)gf_params_int(&g->params, "latency_ms"), (float)gf_params_int(&g->params, "volume") / 100.0f);
@@ -163,8 +168,8 @@ CORE_GREFFON_EXPORT int32_t CoreGreffon_Attach(const CoreGreffonHost* host, cons
 	pc_init(&g->pc, &g->stream, &lines, (int)gf_params_int(&g->params, "swap_channels"));
 	pc_reset(&g->pc, host->now(host->host_ctx));
 
-	rc = gf_sdl_audio_open(&g->sdl, &g->stream, host);
-	if (rc != CORE_GREFFON_OK) { free(g); return rc; }
+	rc = gf_sdl_audio_open(&g->sdl, g->stream.rate, 2, render_stream, &g->stream, host);
+	if (rc != CORE_PLUGIN_OK) { free(g); return rc; }
 
 	memset(callbacks, 0, sizeof *callbacks);
 	callbacks->size = sizeof *callbacks;
@@ -181,16 +186,16 @@ CORE_GREFFON_EXPORT int32_t CoreGreffon_Attach(const CoreGreffonHost* host, cons
 	*ctx = g;
 	s_inst = g;
 	if (host->log) host->log(host->host_ctx, 2, "PlayCity attachee");
-	return CORE_GREFFON_OK;
+	return CORE_PLUGIN_OK;
 }
 
-CORE_GREFFON_EXPORT int32_t PlayCity_Stats(PcStats* out)
+CORE_PLUGIN_EXPORT int32_t PlayCity_Stats(PcStats* out)
 {
-	if (!out || !s_inst) return CORE_GREFFON_ERR_STATE;
+	if (!out || !s_inst) return CORE_PLUGIN_ERR_STATE;
 	out->pushed = s_inst->stream.pushed; out->dropped = s_inst->stream.dropped;
 	out->underruns = s_inst->stream.underruns; out->int_acks = s_inst->int_acks;
 	out->rate = s_inst->stream.rate;
 	out->int_level = (uint32_t)s_inst->pc.int_level; out->nmi_level = (uint32_t)s_inst->pc.nmi_level;
 	out->ay_hz = (uint32_t)pc_ay_hz(&s_inst->pc);
-	return CORE_GREFFON_OK;
+	return CORE_PLUGIN_OK;
 }

@@ -1,6 +1,6 @@
-# Greffon Digiblaster
+# Plugin Digiblaster
 
-CNA 8 bits sur le port imprimante du CPC (Digiblaster, Soundplayer), avec sortie audio SDL2 propre au greffon.
+CNA 8 bits sur le port imprimante du CPC (Digiblaster, Soundplayer), avec sortie audio SDL2 propre au plugin.
 Sortie seule : pas de lecture, pas de ligne BUSY.
 
 - L'échantillon est l'octet brut du port `&EFxx` (le bit 7, strobe, est le 8e bit), non signé, centré sur 128.

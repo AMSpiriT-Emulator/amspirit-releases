@@ -1,6 +1,6 @@
 // Flux audio entre le fil d'émulation (producteur) et le fil audio du client (consommateur) :
 // file SPSC sans verrou, préremplissage, saut vers le récent quand le retard s'accumule.
-// Aucune dépendance SDL : le périphérique audio est branché par ailleurs (greffon_sdl_audio.h).
+// Aucune dépendance SDL : le périphérique audio est branché par ailleurs (plugin_sdl_audio.h).
 //
 // Le producteur pousse des trames (1 ou 2 flottants) à la cadence `rate` ; le consommateur
 // (gf_audio_render) en réclame autant qu'il veut et reçoit toujours le nombre demandé.
