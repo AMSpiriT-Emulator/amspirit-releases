@@ -106,6 +106,9 @@ class AmspiritClient:
         data = compact_json(body) if body is not None else b""
         return self.request("POST", path, data, "application/json" if body is not None else None).json()
 
+    def put(self, path: str, body: dict) -> dict:
+        return self.request("PUT", path, compact_json(body), "application/json").json()
+
     def post_text(self, path: str, text: str) -> dict:
         return self.request("POST", path, text.encode("utf-8"), "text/plain").json()
 

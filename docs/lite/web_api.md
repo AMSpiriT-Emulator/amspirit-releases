@@ -1,5 +1,10 @@
 # AMSpiriT-Lite — Embedded HTTP Debug Server
 
+> **Documented version: AMSpiriT Lite 1.16.2.** Use this version or a newer
+> one — ideally exactly 1.16.2, so the doc matches the binary. If your build
+> differs, treat the running instance as authoritative: query `GET /api/doc`
+> (and `GET /api/doc/<name>`) for the endpoints it actually serves.
+
 Files: `amspirit-helpers/inc/web_server.h`, `amspirit-helpers/src/web_server.cpp`
 
 This file is the narrative companion to the machine-readable API contract
@@ -53,6 +58,7 @@ as long as the server is running.
 | `html_path` | `std::string` | `""` | Path to an external HTML file; empty = embedded UI |
 | `p_rom_lang` | `std::string*` | `nullptr` | Pointer to current ROM language string (FR/EN/SP/DA) |
 | `p_ui_lang` | `std::string*` | `nullptr` | Pointer to current UI language code (en/fr/es/de) |
+| `plugins` / `plugin_dir` / `plugin_dirs` | `PluginHost*` / `std::string` / `std::vector<std::string>` | `nullptr` / `""` / empty | The frontend's plugin host, its user plugin directory and every directory plugins are taken from (empty = just `plugin_dir`) — source of `/api/plugins` |
 | `mtx` | `std::mutex` | — | Internal lock shared between server thread and main thread |
 | `pending` | `WebPending` | — | Pending command (do not access directly, use `web_server_poll`) |
 | `script_status` | `WebScriptStatus` | — | Scripting engine state (running / last error / `print()` capture), published each frame by `web_eval_tick` |
@@ -83,7 +89,7 @@ Consumed by `web_server_poll`.
 | `do_hard_reset` | `bool` | Request a hard reset |
 | `set_pause` | `bool` | `true` if `pause_val` should be applied |
 | `pause_val` | `bool` | New pause state requested |
-| `ram_writes` | `std::vector<WebRamWrite>` | Queued RAM write/execute requests, applied in order (see below) |
+| `cpu_ops` | `std::vector<WebCpuOp>` | Queued RAM write/execute (`/api/ram`, `/api/exec`) and register (`/api/z80`) requests, applied in arrival order (see below) |
 | `autotype_string` | `std::string` | Non-empty = autotype this text (appended on successive calls) |
 | `vk_presses` | `std::vector<uint16_t>` | Raw CPC VK codes to press and release |
 | `script_text` | `std::string` | Non-empty = run this CSL or Lua script |
@@ -96,21 +102,20 @@ Consumed by `web_server_poll`.
 | `run_after_inject` | `bool` | Auto-type `RUN` after successful injection |
 | `do_disk_create` | `bool` | Insert a blank disk into `disk_drive` |
 | `disk_drive` | `uint8_t` | Drive for disk_create (0=A, 1=B) |
-| `do_media_load` | `bool` | Load `media_data` (SNA/DSK/HFE/IPF/CPR/CRO/BIN; `.cdt` currently unsupported) — see `POST /api/media` |
-| `media_data` | `std::vector<uint8_t>` | Raw uploaded file bytes |
-| `media_name` | `std::string` | Filename hint (extension routes headerless `.bin`/`.amsdos`; ignored otherwise) |
-| `media_drive` | `uint8_t` | Target drive for disk images (0=A, 1=B) |
+| `disk_create_cmd` | `uint64_t` | `cmd_seq` of that request, for `emu.failed_cmds` |
+| `media_loads` | `std::vector<WebMediaLoad>` | `POST /api/media` uploads (`cmd`, `data`, `name`, `drive`, `crtc_keep`), applied in arrival order |
 | `do_remap` | `bool` | Apply a live keymap binding change |
-| `remap_kc` | `uint32_t` | Platform keycode to remap |
-| `remap_vk` | `uint16_t` | CPC VK for normal press |
-| `remap_vk_s` | `uint16_t` | CPC VK for shifted press |
-| `remap_nomod` | `bool` | Suppress CPC Shift while this key is active |
+| `remap_host_cp` | `uint32_t` | Host character to remap |
+| `remap_types_cp` | `uint32_t` | CPC character it should now produce |
+| `remap_cmd` | `uint64_t` | `cmd_seq` of that request, for `emu.failed_cmds` |
 | `set_mapping_keyboard` | `bool` | Apply a keyboard mapping mode change |
 | `mapping_keyboard_val` | `bool` | New keyboard mapping mode value |
 | `do_step` | `bool` | Execute exactly one Z80 instruction then re-pause |
 | `do_basic_step` | `bool` | Run until the BASIC statement/line advances then re-pause |
 | `basic_step_byline` | `bool` | `true` = step to next BASIC line; `false` = next statement |
-| `do_rw_back` | `bool` | Navigate the rewind one step back (requires an active rewind — see `POST /api/rewind/back`) |
+| `step_over` | `bool` | With `do_step` / `do_basic_step`: step over a `CALL` / `GOSUB` |
+| `clear_breakpoints` | `bool` | Drop every breakpoint (BASIC, Z80, raster, pending run-to / step-over) |
+| `do_rw_back` / `rw_delta` / `rw_navigate` | `bool` / `int` / `bool` | Move the rewind: net steps (`<0` back, `>0` forward) and whether to navigate without dropping the future (requires an active rewind — see `POST /api/rewind/back`) |
 | `set_breakpoints` | `bool` | Replace the BASIC line-breakpoint set |
 | `breakpoints` | `std::vector<uint16_t>` | BASIC line numbers to break on |
 | `set_z80_breakpoints` | `bool` | Replace the Z80 PC breakpoint set |
@@ -146,22 +151,23 @@ Consumed by `web_server_poll`.
 | `data` | `std::vector<uint8_t>` | Bytes to write (empty = no write) |
 | `exec` | `bool` | If `true`, redirect the PC to `entry` after the write |
 | `entry` | `uint16_t` | Target PC when `exec == true` (default = `addr`) |
-| `bank` | `int` | 16K bank: `0–3` = base 64K, `4+` = extension (`B00`–`B103`) |
+| `bank` | `int` | 16K bank (`B00`–`B103`); numbering in `GET /api/ram` |
+| `cmd` | `uint64_t` | `cmd_seq` of the request that queued it, for `emu.failed_cmds` |
 
-`POST /api/ram` and `POST /api/exec` each push one `WebRamWrite` onto
-`WebPending::ram_writes` rather than overwriting a single slot: several calls
-landing in the same poll tick used to silently coalesce onto one overwritable
-field, dropping every write but the last with no error (`{"ok":true}`
-regardless). `web_dispatch_apply` now applies the whole queue in FIFO order.
+`POST /api/ram`, `POST /api/exec` and `POST /api/z80` share one queue,
+applied in the order the requests arrived: several calls landing in the same
+poll tick are all kept, and a `POST /api/z80` `{"PC":…}` followed by a
+`POST /api/exec` ends on the exec's PC.
 
-Each call also returns a `seq` in its `{"ok":true,"seq":N}` response — the
-value `GET /api/state`'s `emu.ram_apply_seq` will hold once that specific
-write has actually been applied by the main thread. The old contract
-acknowledged the request as soon as it was queued, not once applied, so a
-client reading RAM back immediately after `{"ok":true}` could race the main
-loop (worse for larger payloads / higher system load, with no fixed size
-threshold). Poll `ram_apply_seq` until it is `>= seq` before trusting a
-readback instead of blind retry-and-verify.
+The response is `{"seq":N,"cmd_seq":M}` with `N == M`. **To wait for
+the write, poll `emu.applied_cmd_seq >= cmd_seq`**, like every other command
+(see *Commands: accepted now, applied later*). `seq` and `emu.ram_apply_seq`
+are **deprecated** and will be removed: `seq` is a duplicate of `cmd_seq`,
+`ram_apply_seq` a duplicate of `applied_cmd_seq`.
+
+`applied_cmd_seq` also advances when the write is dropped at application (e.g.
+the RAM size changed after the request was accepted): look for your `cmd_seq`
+in `emu.failed_cmds`, or read the bytes back with `GET /api/ram`.
 
 ---
 
@@ -228,8 +234,8 @@ register writes, media, reset… — is a **command**: the server accepts it at
 once but the emulation loop applies it on its next iteration, so a read made
 right after the response still shows the old state.
 
-Every command's response carries a `cmd_seq`, strictly increasing across all
-commands. `GET /api/ping` (and `GET /api/state`) report `emu.applied_cmd_seq`:
+Every command's response is `{"cmd_seq":N}` (no `ok`: queued is not done),
+strictly increasing across all commands. `GET /api/ping` (and `GET /api/state`) report `emu.applied_cmd_seq`:
 once it is `>= cmd_seq`, the command has been applied **and** the emulation has
 run after it — a `POST /api/step` has executed its instruction. A command whose
 effect spans frames (resume, BASIC step, run-to) is then *started*; watch
@@ -241,17 +247,58 @@ until [ "$(curl -s http://127.0.0.1:6128/api/ping | jq .emu.applied_cmd_seq)" -g
 curl -s http://127.0.0.1:6128/api/z80   # the stepped state
 ```
 
-`POST /api/ram` / `POST /api/exec` also keep their own `seq`, matched by
-`emu.ram_apply_seq` (below); `cmd_seq` covers them too.
+**Which number to compare** — one rule: take the number a response is named
+after.
+
+| Response field | Compare with | Applies to |
+|---|---|---|
+| `cmd_seq` | `emu.applied_cmd_seq` (`/api/ping`, `/api/state`) | every command, including `POST /api/ram` and `/api/exec` — **use this one** |
+| `seq` in a `POST /api/ram` / `/api/exec` response | `emu.ram_apply_seq` | **deprecated**: same values as `cmd_seq` / `emu.applied_cmd_seq` |
+| `seq` in `POST /api/eval` | `GET /api/eval?seq=N` | a Lua eval's outcome, unrelated to the two above |
+
+`cmd_seq` and the deprecated RAM `seq` are the same number; the eval `seq` is an
+independent counter, never comparable with them.
+
+**Did it work?** A few commands can still fail after being accepted — the
+check needs the emulation thread: `POST /api/media` (a file the emulator
+cannot load, or the core refuses), `POST /api/ram` / `/api/exec` (the RAM size
+changed before the write applied), `POST /api/disk` `create`. Once
+`emu.applied_cmd_seq >= cmd_seq`, look for your `cmd_seq` in `emu.failed_cmds`
+(`[{"cmd_seq":12,"error":"…"}]`, the 16 most recent failures, oldest first):
+absent means it worked; present, `error` says why and what to do instead.
+
+**Waiting in the request: `?wait=<ms>`.** Added to any command's `POST`
+(0–30000, default 0 = answer at once, so several commands can be sent back to
+back without waiting), it holds the answer until the command is applied and
+returns its outcome: `200 {"cmd_seq":N,"applied":true}`, `422 {"error":"…","cmd_seq":N}`
+when it was refused at apply time (the `failed_cmds` entry), or
+`408 {"error":"…","cmd_seq":N}` when still queued after the delay (the command
+stays queued: it may apply later). An invalid `wait` is a `400`, nothing queued.
+The WASM build ignores it (single thread: nothing could apply the command).
+
+```bash
+curl -s -X POST 'http://127.0.0.1:6128/api/media?name=game.dsk&wait=3000' --data-binary @game.dsk
+```
+
+## Parameter conventions
+
+One rule per kind of parameter, the same on every endpoint:
+
+- **Booleans** are `true`/`false` in a JSON body, and `true`, `false`, `1` or `0` in a query string. Anything else is a `400`.
+- **Absent means not provided.** There is no "-1 = unused" value: leave the parameter out.
+- **Names are `snake_case`** (`mask_type`, `rw_slots`); only Z80 register names (`PC`, `SP`, …) keep their case.
+- **A closed vocabulary is named**, not numbered (`"6128+"`, `"CTM644"`, drive `A`/`B`); a `400` lists the accepted values.
+
+Spellings older than these (`maskType`, `over=1`, `paused` in `/api/config`) are still accepted but no longer documented.
 
 ## Request bodies and errors
 
-**A `200 {"ok":true}` means the request was accepted.** An endpoint that cannot use
+**A `200` means the request was accepted** (a command: queued, see above). An endpoint that cannot use
 what it was sent answers `400` with an explanation instead — it never reports
 success for a request it ignored:
 
 ```json
-{ "error": "field \"vk\" must be between 0 and 255", "field": "vk" }
+{ "error": "field \"frames\" must be between 1 and 100000", "field": "frames" }
 ```
 
 `field` names the offending key (body field or query parameter) and is omitted for
@@ -261,7 +308,7 @@ whole-body problems. A `400` is returned when:
 |---|---|---|
 | Body is not a JSON object | `RUN`, `` (empty), `{"text":"RUN"` | `expected a JSON object` / `empty body: …` / `unterminated JSON object` |
 | Required field missing | `{}` on `/api/keytype` | `missing field "text": the characters to type` |
-| Field of the wrong type | `{"vk":"157"}`, `{"addr":null}` | `field "vk" must be an integer` |
+| Field of the wrong type | `{"frames":"5"}`, `{"addr":null}` | `field "frames" must be an integer` |
 | Value out of range | `{"volume":150}` | `field "volume" must be between 0 and 100 (percent)` |
 | Value not in the accepted set | `{"rom_lang":"XX"}` | `field "rom_lang" must be one of FR, EN, SP, DA` |
 | Nothing recognised / nothing to do | `{"cpc_modle":2}`, `{"addr":256}` on `/api/ram` | `no recognised field: …` / `nothing to do: …` |
@@ -341,7 +388,7 @@ Available topics: `frame`, `z80_bp`, `basic_bp`, `pause`, `reset`
 | `z80_bp` | Immediate on hit | PC + Z80 registers + `ticks` at the stop |
 | `basic_bp` | Immediate on hit | BASIC line number + statement address |
 | `pause` | On transition | `{"paused": true\|false}` |
-| `reset` | On hard/soft reset | `{"hard": true\|false}` |
+| `reset` | On every hard/soft reset — key, menu, model or RAM change, script or API | `{"hard": true\|false}` |
 
 **`frame` payload**:
 ```json
@@ -368,7 +415,7 @@ Available topics: `frame`, `z80_bp`, `basic_bp`, `pause`, `reset`
 `ticks` is the tick counter at the stop (see `emu.ticks`): subtracting two
 `z80_bp` events times the code between the two breakpoints in NOPs, without a
 single HTTP round trip. To run to the next breakpoint, listen on
-`?topics=z80_bp` and `POST /api/config {"paused":false}`; the event describes
+`?topics=z80_bp` and `POST /api/run {"action":"resume"}`; the event describes
 the stop, and `GET /api/state` (which includes `beam`) completes it.
 
 **`basic_bp` payload**:
@@ -486,7 +533,7 @@ Direct read without lock (display-only data, accepts slight inconsistency).
     "A2": 0, "F2": 0, "B2": 0, "C2": 0,
     "D2": 0, "E2": 0, "H2": 0, "L2": 0,
     "IX": 0, "IY": 0, "I": 0, "R": 0,
-    "IFF1": 1, "IFF2": 1, "IM": 1, "ticks": 85400000
+    "IFF1": 1, "IFF2": 1, "IM": 1, "int_pending": false, "ticks": 85400000
   },
   "ga": {
     "mode": 1,
@@ -511,7 +558,7 @@ Direct read without lock (display-only data, accepts slight inconsistency).
   },
   "fdc": {
     "msr": 128, "sr0": 0, "sr1": 0, "sr2": 0,
-    "motor": false, "drive": 0, "spin_us": 0,
+    "motor": false, "drive": "A", "spin_us": 0,
     "drives": [
       {"connected": true, "disk": true, "track": 0, "steps": 0, "step_us": 0, "dir": 0, "changes": 1},
       {"connected": false, "disk": false, "track": 0, "steps": 0, "step_us": 0, "dir": 0, "changes": 0}
@@ -532,6 +579,7 @@ Direct read without lock (display-only data, accepts slight inconsistency).
     "rw_steps_back": 0,
     "rw_steps_fwd": 0,
     "rw_step_kind": "frame",
+    "rw_step_frames": 10,
     "ram_apply_seq": 0,
     "applied_cmd_seq": 0
   }
@@ -544,6 +592,7 @@ Direct read without lock (display-only data, accepts slight inconsistency).
 |---|---|---|
 | `z80` | `PC`…`L2` | Z80 registers, unsigned integer values |
 | `z80` | `IFF1/IFF2` | Interrupt flip-flops (0 or 1) |
+| `z80` | `int_pending` | INT asserted and not yet acknowledged: stays `true` through a `di` and is taken at the next `ei` (an `ei:halt` then wakes at once) |
 | `z80` | `IM` | Interrupt mode (0, 1 or 2) |
 | `z80` | `ticks` | Same value as `emu.ticks` |
 | `ga` | `mode` | Gate Array video mode (0, 1 or 2) |
@@ -563,7 +612,7 @@ Direct read without lock (display-only data, accepts slight inconsistency).
 | `fdc` | `msr` | Main Status Register of the PD765 |
 | `fdc` | `sr0/sr1/sr2` | Status Registers 0/1/2 |
 | `fdc` | `motor` | Drive motor state |
-| `fdc` | `drive` | Active drive (0 or 1) |
+| `fdc` | `drive` | Active drive: `"A"` or `"B"` |
 | `fdc` | `spin_us` | Motor inertia, shared by both drives: 0 (stopped) to 400000 (full speed); rises on spin-up, falls on spin-down |
 | `fdc` | `drives[]` | Per-drive mechanical state, index 0 = A, 1 = B |
 | `fdc.drives[]` | `connected` / `disk` | Drive present (B only when enabled) / disk inserted |
@@ -579,13 +628,15 @@ Direct read without lock (display-only data, accepts slight inconsistency).
 | `emu` | `ticks` | NOPs (1 µs each) since the last hard reset, SNA load or rewind step — not reset by a soft reset. Subtract two readings to time code within one run |
 | `emu` | `autotyping` | `true` while `POST /api/keytype` / `/api/keypress` still have characters or key presses to deliver |
 | `emu` | `autotype_remaining` | How many are left (0 = idle). Counts bytes of the pending text plus queued VK presses |
-| `emu` | `cpc_model` | CPC model name: `"464"`, `"664"`, `"6128"`, `"6128+"`, `"464+"`, `"GX4000"` (contrast with `GET /api/config`'s `cpc_model`, which stays a numeric id since it also doubles as `POST /api/config`'s input field) |
+| `emu` | `cpc_model` | CPC model name: `"464"`, `"664"`, `"6128"`, `"6128+"`, `"464+"`, `"GX4000"` (the same name `GET /api/config` returns and `POST /api/config` accepts) |
 | `emu` | `crtc_type` | CRTC type (0–4) |
 | `emu` | `rw_active` | `true` if the rewind is enabled and has at least one snapshot |
 | `emu` | `rw_steps_back` / `rw_steps_fwd` | Steps available to navigate the rewind backward/forward (context-filtered to `rw_step_kind`) |
 | `emu` | `rw_step_kind` | Current step-context kind: `"frame"`, `"basic"`, or `"z80"` |
+| `emu` | `rw_step_frames` | Frames one step is worth: `rw_interval` for `"frame"` steps, `0` for `"z80"`/`"basic"` |
 | `emu` | `applied_cmd_seq` | Highest `cmd_seq` applied, the emulation having run after it (see *Commands: accepted now, applied later*) |
-| `emu` | `ram_apply_seq` | Bumped once per queued `WebRamWrite` actually applied by the main thread; compare against the `seq` a `POST /api/ram`/`/api/exec` response returned before trusting a readback (see `WebRamWrite` above) |
+| `emu` | `failed_cmds` | Commands accepted but refused when applied, `[{"cmd_seq","error"}]`, the 16 most recent, oldest first (see *Did it work?*) |
+| `emu` | `ram_apply_seq` | **Deprecated**: same value as `applied_cmd_seq`, use that |
 
 ---
 
@@ -623,7 +674,7 @@ Direct read without lock (display-only data, accepts slight inconsistency).
 > **Note:** Beyond `regs[]`/`selected_reg`, the response may carry additional
 > internal counters/signals — this repo hardcodes none of their names or ids.
 > The *loaded core* is the sole source of truth for that list (see "capacités
-> du core" in `CONTEXT.md`); query it live with `GET /api/doc/crtc`, which
+> du core" in `GLOSSARY.md`); query it live with `GET /api/doc/crtc`, which
 > reflects exactly what the running core exposes. Same mechanism for
 > `GET /api/ga` beyond its base fields.
 
@@ -639,7 +690,7 @@ Returns the current configuration of `CORE_PARAM_IN`.
 
 ```json
 {
-  "cpc_model": 2,
+  "cpc_model": "6128",
   "crtc_type": 0,
   "sound_output": 1,
   "freq_screen": 0,
@@ -651,7 +702,8 @@ Returns the current configuration of `CORE_PARAM_IN`.
   "rw_enabled": false,
   "rw_interval": 10,
   "rw_slots": 100,
-  "history_size": 20
+  "history_size": 20,
+  "last_reinit": "ok"
 }
 ```
 
@@ -674,6 +726,15 @@ the snapshot buffer is on, frames between snapshots, and buffer capacity — as
 set by the CLI, the config file, the Qt/imgui Rewind menu or `POST /api/config`.
 `history_size` is the depth of the Z80 instruction history (`GET /api/history`).
 
+`last_reinit` says whether the last `cpc_model` / `crtc_type` / `rom_lang` change
+made through `POST /api/config` really loaded the machine's firmware — missing
+ROM files are not a 400, since the `POST` only acks the queueing. Read it once
+`GET /api/ping`'s `emu.applied_cmd_seq` has reached the `cmd_seq` the `POST` returned: `"ok"`; `"fell_back_to_6128"` (that model's ROMs
+are missing, a 6128 runs instead); `"plus_firmware_missing"` (no OS cartridge
+for that Plus/GX4000 in this ROM language); `"failed"` (no ROM at all — the
+machine has no firmware; switch to a model whose ROMs exist); `"none"` before
+any change. The emulator keeps running in every case.
+
 **Experimental — machine sounds.** Only once the experimental features are unlocked
 (unlock sequence in the About window or on the splash), the object also carries
 `machine_sounds_drive`, `machine_sounds_tape`, `machine_sounds_tape_signal`, `machine_sounds_keyboard`
@@ -686,7 +747,9 @@ absent.
 
 ### `POST /api/config`
 
-Enqueues a configuration or action command.  
+Enqueues a configuration change. Pause, resume, reset and stepping are not settings: they live in `POST /api/run`.
+Every field `GET /api/config` returns is settable here under the same name, except the read-only ones
+(`sound_output`, `freq_screen`, `extended_ram`, `last_reinit`), so a GET body can be edited and sent back.  
 The command is retrieved by `web_server_poll` at the next loop iteration
 and applied by the main thread (including reset).
 
@@ -694,23 +757,18 @@ and applied by the main thread (including reset).
 
 ```json
 {
-  "cpc_model":    2,
+  "cpc_model":    "6128",
   "crtc_type":    0,
-  "paused":       true,
-  "do_soft_reset": false,
-  "do_hard_reset": false
+  "volume":       80
 }
 ```
 
 | Field | Type | Effect |
 |---|---|---|
-| `cpc_model` | integer | Change the CPC model (triggers an implicit reset on the application side) |
-| `crtc_type` | integer | Change the CRTC type (same) |
+| `cpc_model` | string | Change the CPC model: `"464"`, `"664"`, `"6128"`, `"6128+"`, `"464+"` or `"GX4000"` (triggers an implicit reset on the application side). Without `crtc_type`, a Plus takes CRTC 3 and a classic keeps its CRTC unless it was 3 (then 1) |
+| `crtc_type` | integer | Change the CRTC type (same), `0`–`4`. A Plus/GX4000 runs only `3`, a classic CPC anything but `3`; a pair the emulator cannot build — against the model in the request, else the one queued or running — is rejected (`400`) rather than rewritten |
 | `ram_kb` | integer | **Total** RAM in Ko (central 64 Ko included): `128`, `192`, `320` or `576`. Any other value — including the banked sizes like `512` — is rejected (`400`, `field: ram_kb`) rather than clamped. Resizing the RAM forces a **hard reset** |
 | `rom_lang` | string | ROM language: `"FR"`, `"EN"`, `"SP"`, `"DA"` |
-| `paused` | boolean | Pause or resume emulation |
-| `do_soft_reset` | boolean | Trigger a soft reset |
-| `do_hard_reset` | boolean | Trigger a hard reset |
 | `mapping_keyboard` | boolean | Enable/disable keyboard mapping mode |
 | `volume` | integer | Set output volume 0–100 (SDL frontend; Qt uses its native widget) |
 | `audio_device` | string | Switch the audio output device (`""` = system default). Device names come from `GET /api/audio/devices`. SDL frontend only |
@@ -730,7 +788,7 @@ The `machine_sounds_*` fields are refused with `403` while the experimental feat
 are locked; the whole request is then rejected, other fields included. Once
 unlocked they are persisted like the settings menus.
 
-**Success response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`  
+**Success response**: `200 application/json` — `{"cmd_seq":N}`  
 **Method error response**: `400 text/plain` — `Bad Request`
 
 ---
@@ -742,10 +800,10 @@ server. The quit rides the frontend's **normal exit path**: disk autosave is
 flushed to the host files (Qt/imgui prompt on a failed flush, SDL/headless log
 it), and desktop frontends save their config (the headless frontend never
 writes the shared config — by design). The request is queued and applied by
-the main thread on its next frame, so the `{"ok":true}` response is always
+the main thread on its next frame, so the response is always
 sent before the process exits.
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
+**Response**: `200 application/json` — `{"cmd_seq":N}`
 
 ---
 
@@ -759,7 +817,7 @@ Reads a block of the 64 KB CPC RAM.
 |---|---|---|---|
 | `addr` | integer (decimal or `0x` hex) | `0` | 0–65535 |
 | `len` | integer | `256` | 1–65536 |
-| `bank` | integer | `0` | 16K bank: `0–3` = base 64K, `4+` = extension (`B00`–`B103`). An `addr` above `0x3FFF` carries into it, so `bank=4&addr=0&len=65536` reads a whole 64 Ko bank64 |
+| `bank` | integer | `0` | 16K bank (`B00`–`B103`). `0–3` = the four 16K slices of the base 64K (`3` = `#C000`, the default screen), `4–7` = first extension block, `8+` = further blocks; installed banks = `ram_kb`/16 (128 Ko = `0–7`, 576 Ko = `0–35`). An `addr` above `0x3FFF` carries into the next bank, so `bank=0&addr=0xC000` is `bank=3&addr=0` and `bank=4&addr=0&len=65536` reads a whole 64 Ko block. A read continues into the following banks of the same 64K block (`4N..4N+3`) and stops at its end |
 | `view` | `raw`\|`cpu`\|`fw` | `raw` | `raw` = the bank itself; `cpu` = return memory **as the Z80 sees it** (lower/upper ROM overlays and RAM banking applied); `fw` = firmware/ROM view — a flat 32 Ko image (lower ROM + the currently active upper ROM), independent of `addr`'s RAM banking |
 
 > **Strict validation.** `addr`, `len`, `bank` and `view` are type- and
@@ -769,6 +827,8 @@ Reads a block of the 64 KB CPC RAM.
 > past `0x3FFF` into `bank`, so the two forms are equivalent). `Bnn:hhhh` is
 > the notation used by `POST /api/z80_bp` instead, whose body is a **list** of
 > addresses rather than one range, so each entry needs to name its own kind.
+> A `bank` past the installed RAM (`GET /api/config` `ram_kb`: 128 Ko = `B00`–`B07`)
+> is refused with `400` (`field: bank`), the same rule as `POST /api/ram`.
 
 **Response**: `200 application/json`
 
@@ -789,7 +849,7 @@ same bytes.
 > *bank64s*; it now counts 16 Ko **banks**, the CPC's own unit — so a caller
 > written before this change means `bank=4*N` where it says `bank=N`. Nothing can
 > detect it: `bank=1` is valid under both readings. See
-> [CONTEXT.md](../../CONTEXT.md) for *bank* vs *bank64*.
+> [GLOSSARY.md](../../GLOSSARY.md) for *bank* vs *bank64*.
 >
 > `bank=4+` reflects the same RAM the Z80 reads and writes once that bank is
 > paged in — consistent with `view=cpu`, which shows the currently mapped
@@ -825,23 +885,46 @@ Executed by `web_server_poll` at the next loop iteration.
 | `data` | hex string | Bytes to write (spaces and `:` are tolerated, ignored) |
 | `exec` | boolean | If `true`, the Z80 jumps to `entry` after the write |
 | `entry` | integer | Target PC (default = `addr`) |
-| `bank` | integer | 16K bank to write into: `0–3` = base 64K, `4+` = extension (`B00`–`B103`); same unit and validation as `GET /api/ram`'s `bank` |
+| `bank` | integer | 16K bank to write into, same numbering and validation as `GET /api/ram`'s `bank` (128 Ko = `0–7`, extension `4–7`); `addr` carries into the next bank, and `data` must stay inside one 64K block (`4N..4N+3`), else `400` `field: data` |
 
 `data` empty + `exec: true` = simple PC redirection without write.
 
-Queued rather than applied in place: several calls landing in the same poll
-tick are all kept and applied in order (see `WebRamWrite` above).
+> **Writes are always physical.** There is no `view` field: `bank` + `addr`
+> address the RAM banks themselves, like `GET /api/ram`'s default `view=raw`,
+> never the Z80's mapped view (ROM overlays, current banking). To read back
+> what a write produced, use `GET /api/ram` with the same `bank`/`addr` and
+> the default `raw` view.
 
-**Response**: `200 application/json` — `{"ok":true,"seq":N}`, where `N` is the
-value `GET /api/state`'s `emu.ram_apply_seq` will reach once this write has
-actually been applied — poll it instead of immediately reading RAM back.
+A write that could not land in full is refused with `400` and nothing is
+queued (no exec either):
+
+| `field` | Cause | Recovery |
+|---|---|---|
+| `addr` | `bank` + `addr` carries past the last bank (`B103`) | lower `addr` or `bank` |
+| `data` | the bytes run past the end of their 64K block (banks `4N`–`4N+3`) | split the write at the block boundary |
+| `bank` | the bank is not installed at the current RAM size | `POST /api/config` `ram_kb`, wait for its `cmd_seq` in `GET /api/ping` `emu.applied_cmd_seq`, then write |
+
+Like loading a binary through `POST /api/media`, `exec` pages out the lower
+ROM (target below `0x4000`) or the active upper ROM (target at `0xC000` and
+above) before the jump, so injected code runs instead of the ROM. While the
+lower ROM is out, the interrupt vector at `0x38` reads RAM: run with
+interrupts disabled or install your own handler.
+
+Queued rather than applied in place: several calls landing in the same poll
+tick are all kept and applied in arrival order, together with `POST /api/exec`
+and `POST /api/z80` (see `WebRamWrite` above).
+
+**Response**: `200 application/json` — `{"seq":N,"cmd_seq":M}`. Wait
+for `GET /api/ping` `emu.applied_cmd_seq >= M` before reading RAM back. `N`
+(deprecated) equals `M`.
 
 ---
 
 ### `POST /api/exec`
 
 Redirects the Z80 PC without RAM write.  
-Shortcut equivalent to `POST /api/ram` with empty `data` and `exec: true`.
+Shortcut equivalent to `POST /api/ram` with empty `data` and `exec: true`,
+including the ROM paging described there.
 
 **Body**:
 
@@ -849,7 +932,7 @@ Shortcut equivalent to `POST /api/ram` with empty `data` and `exec: true`.
 {"addr": 4096}
 ```
 
-**Response**: `200 application/json` — `{"ok":true,"seq":N}` (same `ram_apply_seq` contract as `POST /api/ram` above)
+**Response**: `200 application/json` — `{"seq":N,"cmd_seq":M}` (same two counters as `POST /api/ram` above: wait on `cmd_seq`)
 
 ---
 
@@ -865,7 +948,10 @@ is still being typed is appended, never dropped.
 {"text": "RUN\r"}
 ```
 
-Use `\r` (carriage return) to simulate the Enter key.
+`\r`, `\n` or `\r\n` each type one RETURN (Enter). Typing — like a
+`POST /api/keypress` frappe and the `frames` budget of a key or joystick
+hold — advances only while the machine runs: sent during a pause, it waits for
+the resume. Typing is done when `GET /api/ping`'s `emu.autotyping` is `false`.
 
 ```bash
 curl -X POST http://127.0.0.1:6128/api/keytype \
@@ -873,7 +959,7 @@ curl -X POST http://127.0.0.1:6128/api/keytype \
      -d '{"text":"RUN\r"}'
 ```
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
+**Response**: `200 application/json` — `{"cmd_seq":N}`
 
 **Pacing** — *not* one character per frame (that claim was wrong):
 
@@ -930,10 +1016,13 @@ After injection, type `RUN` or `LIST` in the emulator.
 
 | Parameter | Type | Default | Effect |
 |---|---|---|---|
-| `reset` | `0` or `1` | `0` | Hard reset before injection |
-| `run` | `0` or `1` | `0` | Auto-type `RUN` after injection |
+| `reset` | boolean | `false` | Hard reset before injection |
+| `run` | boolean | `false` | Auto-type `RUN` after injection |
 
 Expected format: one statement per line, line number required.
+A listing without any numbered line is refused with `400` before anything
+is queued (no reset either): it would replace the program in RAM with an
+empty one. Type direct commands (`PRINT 1`, `CLS`) with `POST /api/keytype`.
 
 ```
 10 MODE 1
@@ -966,7 +1055,7 @@ curl -X POST http://127.0.0.1:6128/api/basic \
 
 ```bash
 # Inject and launch automatically
-curl -X POST http://127.0.0.1:6128/api/basic?run=1 \
+curl -X POST http://127.0.0.1:6128/api/basic?run=true \
      -H 'Content-Type: text/plain' \
      --data-binary '10 PRINT "LOOP":GOTO 10'
 ```
@@ -975,7 +1064,7 @@ The window title bar confirms the injection:
 - success: `BASIC injected — type LIST or RUN`
 - failure (program too large): `BASIC inject failed: program too large`
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
+**Response**: `200 application/json` — `{"cmd_seq":N}`
 
 ---
 
@@ -1023,13 +1112,13 @@ Detokenizes and exports the current BASIC program from RAM as source text.
 
 | Parameter | Type | Default | Effect |
 |---|---|---|---|
-| `verbose` | `0` or `1` | `0` | Include extra whitespace for readability |
+| `verbose` | boolean | `false` | Include extra whitespace for readability |
 
 **Response**: `200 text/plain; charset=utf-8` — Locomotive BASIC source
 
 ```bash
 curl http://127.0.0.1:6128/api/basic_export > exported.bas
-curl http://127.0.0.1:6128/api/basic_export?verbose=1 > exported_readable.bas
+curl http://127.0.0.1:6128/api/basic_export?verbose=true > exported_readable.bas
 ```
 
 If no BASIC program is loaded or RAM is unavailable, returns an empty response.
@@ -1038,38 +1127,108 @@ If no BASIC program is loaded or RAM is unavailable, returns an empty response.
 
 ### `POST /api/keypress`
 
-Sends a single virtual key code to the emulator (CPC-specific key).
+Presses, holds or releases a single CPC key, named by its legend on the keyboard of the ROM language.
 
 **Body**: `application/json`
 
 ```json
-{"vk": 32}
+{"cpc_key": "SPACE"}
+{"cpc_key": "Q", "down": true}
+{"cpc_key": "Q", "down": true, "frames": 50}
+{"cpc_key": "Q", "down": false}
 ```
 
 | Field | Type | Role |
 |---|---|---|
-| `vk` | integer | Virtual key code (0–0xFF, from `CORE_rVK_*` constants) |
+| `cpc_key` | string | CPC key name, case-insensitive: `A`–`Z`, `0`–`9` (no effect on their own, see below), `F0`–`F9` (numeric keypad), `SPACE`, `ENTER`, `TAB`, `ESC`, `DEL`, `CLR`, `COPY`, `SHIFT`, `CTRL`, `CAPS_LOCK`, `LEFT`, `RIGHT`, `UP`, `DOWN`, `F_DOT` and the punctuation keys `- ^ @ [ ] : ; , . / \` |
+| `down` | boolean | Absent: one-shot press (a *frappe*). `true`: hold the key. `false`: release it |
+| `frames` | integer | Only with `down:true`, 1–100000: release by itself after this many emulated frames |
 
-This is an alternative to `/api/keytype` for sending pre-mapped CPC key codes directly, useful for non-ASCII keys (arrows, function keys, etc.).
+A name is the legend of a key on the CPC keyboard **of the ROM language**: `"Q"` is the key that types `q`. Which matrix position that key lights depends on the language (on an FR ROM, `A`/`Q`, `W`/`Z` and `M` sit where an EN keyboard has other keys, as on an AZERTY CPC), so the same name works whichever ROM is loaded, but never read a name off the matrix of `GET /api/keymatrix` with a fixed table. A capital or shifted glyph is the key with `SHIFT` held (hold `{"cpc_key":"SHIFT","down":true}` first).
+
+**Known limitation: the digit keys `0`–`9` press nothing on their own**, on FR and EN ROMs alike (with `SHIFT` held the key appears in the matrix, which types the symbol, not the digit). Type digits with `POST /api/keytype`. The other names behave as described. An unknown name answers 400 with the list of valid ones.
+
+This is an alternative to `/api/keytype` for keys that have no text form (arrows, `COPY`, function keys, `CTRL`…) and for holding or releasing a key.
 
 Presses are queued and delivered *after* any pending `/api/keytype` text (see that
 endpoint's **Ordering** note), and count towards `emu.autotype_remaining`.
 
-**Shifted letter codes**: the `CORE_rVK_MAJ_*` range (uppercase letters) needs the
-CPC SHIFT held alongside the key, which this endpoint now synthesises — pressing
-`CORE_rVK_MAJ_R` (0x1F) produced nothing at all before. Prefer `/api/keytype` for
-text: it resolves the whole shift/control layer from the characters themselves.
+**Holding a key.** A plain press lasts about one emulated frame, too short to be
+seen by a client polling `GET /api/keymatrix` on the wall clock, and too short for a
+game that samples its input every few frames. With `down:true` the key stays down
+until `down:false`, until the `frames` budget runs out, or until a hard or soft reset.
+Several keys can be held at once, one call each. Releasing a key that is not held
+succeeds and does nothing. A hold does not wait behind `/api/keytype` text.
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
+A key stays down as long as *any* source holds it: if the host keyboard also holds
+the same key, releasing the hold does not let go of it, and the reverse.
+
+Limits: a hold does not synthesise SHIFT — hold `SHIFT` alongside the key. A one-shot press of a key that is currently held releases
+it; do not mix the two on the same key. A held key is an ordinary key of the CPC
+matrix, so it takes part in the keyboard clash like a physical one: pressing other
+keys of the same column can make the CPC see ghost or missing keys. Changing the
+focus of the Qt window can drop a held key for a few frames before it comes back.
+A script that writes the matrix itself (Lua `keyboard_write`) bypasses the hold and
+can let go of a held key without the API noticing.
+
+`frames` without `down:true` (absent or `false`), or outside 1–100000, is a `400`.
+
+**Response**: `200 application/json` — `{"cmd_seq":N}`
+
+---
+
+### `POST /api/joystick`
+
+Holds a joystick state (directions and fire buttons) on port 0, like a gamepad
+would, until it is released.
+
+**Body**: `application/json`
+
+```json
+{"up": true, "fire1": true}
+{"right": true, "frames": 50}
+{"release": true}
+```
+
+| Field | Type | Role |
+|---|---|---|
+| `up`, `down`, `left`, `right` | boolean | Directions, default `false` |
+| `fire1`, `fire2`, `fire3` | boolean | Fire buttons (SPACE, CONTROL, ALT), default `false` |
+| `frames` | integer | 1–100000: let go by itself after this many emulated frames. Absent: until released |
+| `release` | boolean | `true` lets go of everything the API holds; cannot be combined with a state or `frames` |
+| `port` | integer | Only `0` exists; any other value is a `400` |
+
+Each call states the **whole** joystick wanted, not a change: a direction left out is
+released. The state is merged with a real gamepad by OR, so neither source cancels
+the other. A hard or soft reset releases it.
+
+When no joystick is connected, the first call connects a digital one, as plugging a
+gamepad would. A joystick already chosen (analogue, mapped) is left as it is.
+
+The state is digital. If the user picked an analogue or mapped joystick, the core
+ignores it and the call still answers `200`; the choice made in the frontend wins.
+
+The joystick does **not** appear in `GET /api/keymatrix`: to check it, read it from
+a CPC program (`JOY(0)`: bit 0 up, 1 down, 2 left, 3 right, `0x10` fire 1, `0x20`
+fire 2, `0x40` fire 3). Plugging in or switching off a real gamepad while the API
+holds a state can cut the joystick until the next call.
+
+**Response**: `200 application/json` — `{"cmd_seq":N}`
 
 ---
 
 ### `GET /api/keymap`
 
-Returns the current keyboard mapping as JSON: `keys[]` (one entry per mapped
-host key or character, with the CPC virtual key it types, with and without
-SHIFT), `hotkeys[]` (the emulator's own shortcuts) and `platform`. The exact
-field list is `GET /api/doc/keymap`.
+Returns the current keyboard mapping as JSON: `keys[]` (one entry per host
+character, with the CPC character it types: `{"host_key":"a","types":"a"}`, plus
+`shift`/`ctrl` when the CPC has to hold that modifier) and `hotkeys[]` (the
+emulator's own shortcuts, `host_key` being the name the frontend's toolkit gives
+the key, `"F6"`). The table follows the ROM language: on an FR ROM the digit row
+is typed with SHIFT, as on a real AZERTY CPC. An entry set by hand in
+`keymap.cfg` to a key no CPC character maps to carries `"custom":true` instead of
+`types`. The exact field list is `GET /api/doc/keymap`.
+
+Every `types` this returns is accepted by `POST /api/keymap`.
 
 Used by the web interface to display the current keymap layout.
 
@@ -1126,7 +1285,7 @@ curl -X POST 'http://127.0.0.1:6128/api/script?lang=lua' \
      --data-binary @myscript.lua
 ```
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
+**Response**: `200 application/json` — `{"cmd_seq":N}`
 
 ---
 
@@ -1154,7 +1313,7 @@ by one eval are still there for the next. This is the console endpoint.
 
 Unlike every other POST on this API, an eval has an **answer**, so this route is
 request/response: the POST issues a `seq`, and `GET /api/eval?seq=N` reads the
-outcome back. Same contract as `ram_write_seq` / `ram_apply_seq` — acking the
+outcome back. Same contract as `cmd_seq` / `applied_cmd_seq` — acking the
 queueing is not acking the result.
 
 The body is the chunk, taken verbatim: **no CSL preprocessing on this route**
@@ -1229,7 +1388,7 @@ Interrupts the currently running script.
 curl -X DELETE http://127.0.0.1:6128/api/script
 ```
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
+**Response**: `200 application/json` — `{"cmd_seq":N}`
 
 ---
 
@@ -1238,14 +1397,49 @@ curl -X DELETE http://127.0.0.1:6128/api/script
 These power the **CPU** tab (disassembler, single-step, executed-code map,
 instruction history). Stepping requires the emulator to be paused.
 
-### `POST /api/step`
+### `POST /api/run`
+
+Execution control in one place: pause, resume, reset, step. Queued like every command.
+
+**Body**: `application/json`
+
+| Field | Type | Effect |
+|---|---|---|
+| `action` | `pause`, `resume`, `reset`, `step` | Required. `pause`/`resume` act like the Pause key and never clear breakpoints; an SSE `pause` event is emitted only when the state changes |
+| `kind` | `soft` (default), `hard` | `reset` only. Applied after any `cpc_model`/`crtc_type`/`rom_lang`/`ram_kb` change of the same `POST /api/config` (each of those resets the machine itself), before any RAM write or exec |
+| `target` | `z80` (default), `basic` | `step` only: one Z80 instruction, or one BASIC statement |
+| `over` | boolean | `step` only: step over a `CALL` (`z80`) or a `GOSUB` (`basic`) |
+| `unit` | `statement` (default), `line` | `step` with `target` `basic` only: stop at the next statement or the next line |
+
+A parameter that does not belong with the `action` is a `400` naming it. Steps follow the rules of
+`POST /api/step` and `POST /api/basic_step` below, which remain as aliases.
+
+```bash
+curl -X POST http://127.0.0.1:6128/api/run -d '{"action":"pause"}'
+curl -X POST http://127.0.0.1:6128/api/run -d '{"action":"step","over":true}'
+curl -X POST http://127.0.0.1:6128/api/run -d '{"action":"step","target":"basic","unit":"line"}'
+curl -X POST http://127.0.0.1:6128/api/run -d '{"action":"reset","kind":"hard"}'
+```
+
+**Response**: `200 application/json` — `{"cmd_seq":N}`
+
+---
+
+### `POST /api/step[?over=true]`
 
 Executes **exactly one Z80 instruction** then re-pauses. The emulator is
 briefly resumed and stopped again once the PC has advanced past the current
 instruction (so it works even though the CPU is already sitting on an
-instruction boundary while paused).
+instruction boundary while paused). Pause first, wait for that command's
+`cmd_seq`, then step; the new registers are in `GET /api/state` once the
+step's `cmd_seq` is applied.
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
+`?over=true` steps **over** a `CALL nn` / `CALL cc,nn`: the subroutine runs and
+the CPU pauses on the instruction after the `CALL` (a breakpoint inside the
+subroutine, or any other stop, ends the step-over there). On any other
+instruction it is a plain step. `over` other than `true`, `false`, `1` or `0` → `400`.
+
+**Response**: `200 application/json` — `{"cmd_seq":N}`
 
 ---
 
@@ -1297,7 +1491,7 @@ which an instruction has **started executing** since the last reset. Bit
 
 `DELETE` clears the bitmap (and the instruction history).
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}` for `DELETE`.
+**Response**: `200 application/json` — `{"cmd_seq":N}` for `DELETE`.
 
 ---
 
@@ -1314,9 +1508,9 @@ on, so `GET /api/screenshot` with no parameters keeps working exactly as before)
 
 | Parameter | Default | Effect |
 |---|---|---|
-| `crop` | `1` | `1` = visible screen area only, `0` = full physical buffer (1024×350, sync borders included) |
-| `live` | `1` while paused, else `0` | `1` = in-progress buffer (the frame being drawn), `0` = last settled frame |
-| `full` | `1` | `1` = plain complete frame, `0` = composite (in-progress frame over the previous one, for debugging a partial screen) |
+| `crop` | `true` | `true` = visible screen area only, `false` = full physical buffer (1024×350, sync borders included) |
+| `live` | `true` while paused, else `false` | `true` = in-progress buffer (the frame being drawn), `false` = last settled frame |
+| `full` | `true` | `true` = plain complete frame, `false` = composite (in-progress frame over the previous one, for debugging a partial screen) |
 
 `live` is forced to `0` while the rewind is rewound: the core does not snapshot
 the in-progress backbuffer, so it would be stale.
@@ -1335,7 +1529,7 @@ was when it was taken (video-buffer space, the same coordinates
 | `X-Crop-W`, `X-Crop-H` | its size (`768×272` cropped, `1024×350` full) |
 
 ```bash
-curl -s 'http://127.0.0.1:6128/api/screenshot?crop=1&full=1&live=0' -o screen.png
+curl -s 'http://127.0.0.1:6128/api/screenshot?crop=true&full=true&live=false' -o screen.png
 ```
 
 ---
@@ -1428,13 +1622,12 @@ Returns the current CRT monitor preset, screen type and shader parameters.
 
 ```json
 {
-  "monitor": 1,
-  "monitor_name": "CTM644",
+  "monitor": "CTM644",
   "screen_type": 0,
   "presets": ["Off","CTM644","GT65","TV"],
   "crt": {
     "curvature": 0.005, "scanline": 0.30, "sharpness": 0.80,
-    "maskType": 4, "maskPitch": 3.0, "mask": 0.15,
+    "mask_type": 4, "mask_pitch": 3.0, "mask": 0.15,
     "halation": 0.12, "diffusion": 0.10, "convergence": 0.0,
     "brightness": 1.0, "persistence": 0.0
   }
@@ -1443,9 +1636,9 @@ Returns the current CRT monitor preset, screen type and shader parameters.
 
 | Field | Description |
 |---|---|
-| `monitor` / `monitor_name` | Current monitor preset index (0–3) and name |
+| `monitor` | Current monitor preset: `"Off"`, `"CTM644"`, `"GT65"` or `"TV"` |
 | `screen_type` | Screen type: 0 = colour, 1 = green, 2 = colour (ASIC), 3 = green (ASIC) |
-| `presets` | Available monitor preset names |
+| `presets` | The accepted `monitor` values |
 | `crt` | CRT shader parameters (see `POST /api/render`) |
 
 ### `POST /api/render`
@@ -1456,18 +1649,18 @@ subset of the keys may be sent. `crt` is applied as a whole set when present.
 **Body**: `application/json`
 
 ```json
-{ "monitor": 2 }
+{ "monitor": "GT65" }
 { "screen_type": 1 }
 { "crt": { "curvature":0.005, "scanline":0.30, "sharpness":0.80,
-           "maskType":4, "maskPitch":3.0, "mask":0.15, "halation":0.12,
+           "mask_type":4, "mask_pitch":3.0, "mask":0.15, "halation":0.12,
            "diffusion":0.10, "convergence":0.0, "brightness":1.0, "persistence":0.0 } }
 ```
 
 Selecting a `monitor` preset loads that preset's default parameters. Ranges:
 `curvature` 0–0.03, `scanline`/`sharpness`/`mask`(≤0.25)/`halation`/`diffusion`/`persistence` 0–1,
-`maskType` 0–4, `maskPitch` ~1–6, `convergence` −2…2, `brightness` 0.1–3.
+`mask_type` 0–4, `mask_pitch` ~1–6, `convergence` −2…2, `brightness` 0.1–3.
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
+**Response**: `200 application/json` — `{"cmd_seq":N}`
 
 ---
 
@@ -1479,8 +1672,8 @@ rely on the Locomotive BASIC text pointers `0xAE1D` (current line) and `0xAE1B`
 (current statement / execution address).
 
 The CRT shader block takes eleven parameters, all optional and all validated:
-`curvature`, `scanline`, `sharpness`, `maskPitch`, `mask`, `halation`,
-`diffusion`, `convergence`, `brightness`, `persistence` (numbers) and `maskType`
+`curvature`, `scanline`, `sharpness`, `mask_pitch`, `mask`, `halation`,
+`diffusion`, `convergence`, `brightness`, `persistence` (numbers) and `mask_type`
 (integer). A non-numeric value is a `400`, not a silent fallback to the default —
 that changed in 1.14.4, see the changelog.
 
@@ -1517,30 +1710,40 @@ point (line via `cur_linenum`, statement via `stmt_addr`).
 
 ---
 
-### `POST /api/basic_step[?mode=line]`
+### `POST /api/basic_step[?mode=line][&over=true]`
 
 Resumes the program and re-pauses once it advances:
 - default (no `mode`): to the **next statement** (watches `0xAE1B`);
 - `?mode=line`: to the **next BASIC line** (watches the line number).
 
-Only meaningful while a program line is running (not in direct mode).
+With no program line running (direct mode, `cur_linenum` 65535 in
+`GET /api/basic_state`) it executes one Z80 instruction instead, as the
+native F7 key does.
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
+`?over=true` steps **over** a `GOSUB`: the subroutine runs and execution pauses
+on the following statement. Any other statement is a plain step; in direct
+mode it is a Z80 step-over (see `POST /api/step`). `over` other than `true`, `false`,
+`1` or `0` → `400`; so is a `mode` other than `line`.
+
+**Response**: `200 application/json` — `{"cmd_seq":N}`
 
 ---
 
 ### `POST /api/basic_bp`
 
-Replaces the BASIC line-breakpoint set. Body is a comma-separated list of line
-numbers (empty body clears all). While breakpoints exist, the emulator pauses
-when execution reaches a breakpoint line.
+**Deprecated: use `PUT /api/breakpoints`** (`{"basic":[{"line":100}]}` — no statement address to look up).
+
+Replaces the BASIC breakpoint set. Body is a comma-separated list of decimal
+statement addresses — the `stmt_addr` of `GET /api/basic_listing` — (empty body
+clears all). While breakpoints exist, the emulator pauses when execution
+reaches one of those statements.
 
 ```bash
-curl -X POST http://127.0.0.1:6128/api/basic_bp -d '10,40,100'
+curl -X POST http://127.0.0.1:6128/api/basic_bp -d '4660,4702'
 curl -X POST http://127.0.0.1:6128/api/basic_bp -d ''     # clear all
 ```
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
+**Response**: `200 application/json` — `{"cmd_seq":N}`
 
 ---
 
@@ -1550,7 +1753,7 @@ One-shot "run to": resumes and pauses when execution reaches the given BASIC
 line (`line=`) or statement address (`addr=`, an `0xAE1B` value from
 `/api/basic_listing`). The target is cleared once hit.
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
+**Response**: `200 application/json` — `{"cmd_seq":N}`
 
 ---
 
@@ -1584,7 +1787,7 @@ Returns Z80 registers only. Same payload as the `"z80"` object in `GET /api/stat
 ### `POST /api/z80`
 
 Writes Z80 registers. Executed by `web_server_poll` at the next loop iteration
-— same queue-then-apply contract as `POST /api/ram`.
+— same queue as `POST /api/ram` and `POST /api/exec`, applied in arrival order.
 
 **Body**: `application/json`, one optional integer field per register — a
 **partial update**: a field that is absent leaves that register unchanged.
@@ -1604,7 +1807,7 @@ reachable here without a script.
 Every field is validated (type and range) by the router before the handler
 runs, same as `POST /api/ram`'s `addr`/`bank`. At least one field is required.
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
+**Response**: `200 application/json` — `{"cmd_seq":N}`
 
 ---
 
@@ -1643,6 +1846,8 @@ Returns the current state of the 10-row CPC keyboard matrix (raw hardware view, 
 ```
 
 Each byte is a bitmask of the 8 keys in that row (0 = key pressed, 1 = released, CPC active-low convention).
+
+The matrix is hardware, but what each position *types* depends on the ROM language (on an FR ROM the A and Q positions are swapped, as on an AZERTY CPC), so a position has no name that holds for every language: this endpoint does not name keys.
 
 ---
 
@@ -1760,16 +1965,62 @@ curl http://127.0.0.1:6128/api/audio/devices
 
 ---
 
+## Plugins
+
+A plugin is a native library that emulates a hardware extension plugged into the CPC. They live in the plugin directory (`<config dir>/plugins`) or in the directory the package ships (AppImage, Flatpak), searched after it; `--plugin PATH` can also attach one from elsewhere for the session.
+
+A plugin is native code run with the user's rights, and the API is open to any web page: it can only attach files **already in a plugin directory**, named by plain file name, never by path.
+
+### `GET /api/plugins`
+
+Lists the plugin files of every plugin directory (once per file name, the user directory winning over the shipped one) and which ones are attached. The description and parameters of a plugin are only known once it is attached.
+
+**Response**: `200 application/json`
+
+```json
+{"supported": true, "dir": "/home/u/.config/amspirit-lite/plugins",
+ "plugins": [
+   {"file": "m4board.so", "attached": true, "name": "M4 Board", "version": "0.3.1",
+    "description": "SD card interface", "connectors": ["expansion"],
+    "params": [{"key": "rate", "label": "Rate", "type": "int", "live": false,
+                "default": "10", "value": "10", "min": 1, "max": 100}]},
+   {"file": "other.so", "attached": false}]}
+```
+
+`supported` is false on builds that cannot load plugins; every POST then answers `501`.
+
+### `POST /api/plugins`
+
+Body: `{"action": "attach"|"detach"|"set_param", "file": "m4board.so"}`, plus:
+
+| Field | For | Role |
+|---|---|---|
+| `params` | `attach` | Initial parameters, `"key=value,key=value"` (the same grammar as `--plugin`) |
+| `key`, `value` | `set_param` | The parameter and its new value, as text |
+
+The request is validated, then queued like the other commands (`{"cmd_seq":N}`). It worked when `GET /api/ping` `emu.applied_cmd_seq >= N` and `N` is not in `emu.failed_cmds`; a refusal carries the reason (for instance a port already claimed by another plugin).
+
+A parameter marked `live` changes at once; any other restarts the plugin (detach + attach) to take the new value. On the native frontends (SDL2, Qt, imgui) the plugins attached at exit are saved with the settings and come back at the next launch; the headless frontend never writes its config.
+
+```bash
+curl -X POST http://127.0.0.1:6128/api/plugins -d '{"action":"attach","file":"m4board.so","params":"rate=20"}'
+```
+
+---
+
 ## Z80 Breakpoints
 
 ### `POST /api/z80_bp`
+
+**Deprecated: use `PUT /api/breakpoints`**, which takes the same locations in a `z80` list.
 
 Replaces the Z80 PC breakpoint set. While breakpoints are active, the emulator pauses when the PC hits a breakpoint address.
 
 **Body**: comma-separated list, each entry either
 
 - a **CPU address** — decimal or `0x…` hex, `0`–`65535`. Note that bare digits are read as **decimal** here (`100` is 100, not `0x100`), unlike the shared notation's bare form;
-- a **physical location** — `Bnn:hhhh`, where `nn` is a 16 Ko bank index in **hex** (`B00`–`B103`) and `hhhh` a hex offset. An offset above `0x3FFF` carries into the bank, so `B00:4100` is the same byte as `B01:0100`.
+- a **physical location** — `Bnn:hhhh`, where `nn` is a 16 Ko bank index in **hex** (`B00`–`B103`) and `hhhh` a hex offset. An offset above `0x3FFF` carries into the bank, so `B00:4100` is the same byte as `B01:0100`;
+- a **ROM location** — `Rnn:hhhh` (upper ROM `nn`, hex) or `FW:hhhh` (firmware ROM), offset `0000`–`3FFF`. These are the forms `GET /api/breakpoints` emits, so its `z80` list can be edited and posted back as it is.
 
 A CPU address names no byte on its own — what it points at depends on the paging — so it is **resolved against the live mapping when the set is applied**, and stored as the RAM bank or ROM that actually holds it. The log line says where it landed. A breakpoint therefore fires on a byte, not on an address: paging a different bank into that slot will not trigger it.
 
@@ -1790,7 +2041,54 @@ curl -X POST http://127.0.0.1:6128/api/z80_bp -d 'B04:0200'
 curl -X POST http://127.0.0.1:6128/api/z80_bp -d ''
 ```
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
+**Response**: `200 application/json` — `{"cmd_seq":N}`
+
+### `GET /api/breakpoints`
+
+Everything currently armed to stop the emulation, the three kinds together: the Z80 set above, the BASIC set and the raster breakpoint. It is refreshed every frame, so it also shows what was set from the native window (screen click, `Ctrl+F9`), not only what came through the API. Like every command, a `POST` is visible here only after its `cmd_seq` is applied.
+
+```json
+{"z80":["B04:2000","R07:0100","FW:0038"],"basic":[{"line":100,"stmt":2,"addr":4660}],"raster":{"x":256,"y":120}}
+```
+
+- `z80` — normalised locations (`Bnn:hhhh`, `Rnn:hhhh`, `FW:hhhh`), in the order they were set. A CPU address posted earlier appears already resolved to the bank or ROM it landed in.
+- `basic` — one object per armed statement: `line` and `stmt` (0-based index within the line, as in `lines[].stmts[]` of `GET /api/basic_listing`) and `addr`, the statement address (`stmt_addr` while it runs). `line`/`stmt` are absent when the program no longer holds that address.
+- `raster` — `{x, y}` in video-buffer coordinates, or `null` when disarmed.
+
+To remove one breakpoint, read this document, drop the entry and `PUT` the rest back.
+
+### `PUT /api/breakpoints`
+
+Writes the document `GET /api/breakpoints` returns. Each kind present is
+**replaced as a whole**; a kind left out is left alone; `"raster":null` disarms.
+Everything is validated before anything is queued, so one bad entry (a BASIC line
+the program does not have, an unreadable location) is a `400` naming it and
+changes nothing. The three kinds are applied together under one `cmd_seq`.
+
+```json
+{"z80":["B04:2000","FW:0038","0xC000"],
+ "basic":[{"line":100},{"line":120,"stmt":2}],
+ "raster":{"x":256,"y":120}}
+```
+
+- `z80` — locations in the notation of the Z80 section above (`Bnn:hhhh`, `Rnn:hhhh`, `FW:hhhh`, or a CPU address resolved when applied).
+- `basic` — `{"line":N}` is the first statement of line `N`; `"stmt"` picks a later one, 0-based. The line must exist in the program (`GET /api/basic_listing`). `[]` clears. A bare integer is still read as a statement address.
+- `raster` — `{"x":N,"y":N}` in video-buffer space, 0–65535.
+
+```bash
+curl -X PUT http://127.0.0.1:6128/api/breakpoints -d '{"basic":[{"line":100}]}'
+curl -X PUT http://127.0.0.1:6128/api/breakpoints -d '{"z80":[],"raster":null}'
+```
+
+**Response**: `200 application/json` — `{"cmd_seq":N}`
+
+### `DELETE /api/breakpoints`
+
+Clears every breakpoint at once — Z80, BASIC, raster, and a pending run-to or
+step-over — like the native `Ctrl+F9`. A paused machine stays paused. Connected
+debug pages receive a `bp_clear` event on `GET /api/events`.
+
+**Response**: `200 application/json` — `{"cmd_seq":N}`
 
 ---
 
@@ -1798,11 +2096,22 @@ curl -X POST http://127.0.0.1:6128/api/z80_bp -d ''
 
 ### `POST /api/rewind/back`
 
-Navigates the rewind one step back. Only meaningful while a rewind is active (`emu.rw_active`, see `GET /api/state`) — check `emu.rw_steps_back` first to know if there is anywhere to go.
+Steps the rewind back. Only meaningful while a rewind is active (`emu.rw_active`, see `GET /api/state`) — check `emu.rw_steps_back` first to know if there is anywhere to go.
+
+| Query | Default | Meaning |
+|---|---|---|
+| `n` | `1` | Snapshots to go back (steps past the oldest are ignored) |
+| `mode` | `drop` | `navigate`: only navigate, like the native back key, so `POST /api/rewind/forward` can return to where you were |
+
+With `mode=drop` the step is destructive: the snapshot becomes the live state and the future beyond it is dropped (`emu.rw_steps_fwd` stays 0). One step is `emu.rw_step_frames` frames when `emu.rw_step_kind` is `"frame"`, otherwise one Z80 instruction or BASIC statement.
 
 ```bash
-curl -X POST http://127.0.0.1:6128/api/rewind/back
+curl -X POST "http://127.0.0.1:6128/api/rewind/back?n=3&mode=navigate"
 ```
+
+### `POST /api/rewind/forward`
+
+Steps forward `n` snapshots (`?n=`, default 1), the mirror of `back?mode=navigate`. Refused with `400` (field `n`) when `emu.rw_steps_fwd` is 0; steps past the live state are ignored. The machine stays paused.
 
 **Using rewind for debugging** (notably for AI agents): the default setting —
 one snapshot every 10 frames — is meant for rewinding a game, and each step back
@@ -1815,11 +2124,11 @@ curl -X POST http://127.0.0.1:6128/api/config \
 ```
 
 Let the program run up to (or past) the moment of interest, pause
-(`{"paused":true}`), then call `POST /api/rewind/back` repeatedly, inspecting the
+(`POST /api/run {"action":"pause"}`), then call `POST /api/rewind/back` repeatedly, inspecting the
 machine at each step (`GET /api/state`, `GET /api/ram`, `GET /api/history`,
 screenshots). Keep `rw_slots` moderate: every snapshot costs ~1.6 MB.
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
+**Response**: `200 application/json` — `{"cmd_seq":N}`
 
 ---
 
@@ -1833,7 +2142,7 @@ Returns the current CTM beam position and the crop rectangle for a given `crop=`
 
 | Parameter | Type | Default | Effect |
 |---|---|---|---|
-| `crop` | `0` or `1` | `1` | `1` = crop rectangle is the visible screen area, `0` = full physical buffer |
+| `crop` | boolean | `true` | `true` = crop rectangle is the visible screen area, `false` = full physical buffer |
 
 **Response**: `200 application/json`
 
@@ -1842,14 +2151,16 @@ Returns the current CTM beam position and the crop rectangle for a given `crop=`
 ```
 
 ```bash
-curl 'http://127.0.0.1:6128/api/beam?crop=1'
+curl 'http://127.0.0.1:6128/api/beam?crop=true'
 ```
 
 ---
 
-### `POST /api/raster_bp?x=<n>&y=<n>&enable=<0|1>`
+### `POST /api/raster_bp?x=<n>&y=<n>&enable=<bool>`
 
-Arms or disarms a raster breakpoint at a pixel in video-buffer space (same coordinates as `GET /api/beam` and the crop headers of `GET /api/screenshot`). Missing `x`/`y`, or `enable=0`, disarms it.
+**Deprecated: use `PUT /api/breakpoints`** (`{"raster":{"x":256,"y":120}}`, or `"raster":null`).
+
+Arms or disarms a raster breakpoint at a pixel in video-buffer space (same coordinates as `GET /api/beam` and the crop headers of `GET /api/screenshot`). Missing `x` or `y`, or `enable=false`, disarms it.
 
 **Query parameters**:
 
@@ -1857,18 +2168,18 @@ Arms or disarms a raster breakpoint at a pixel in video-buffer space (same coord
 |---|---|---|---|
 | `x` | integer | — | Target column, 0–65535 |
 | `y` | integer | — | Target line, 0–65535 |
-| `enable` | `0` or `1` | `1` if both `x`/`y` given, else `0` | `0` disarms regardless of `x`/`y` |
+| `enable` | boolean | `true` if both `x`/`y` given, else `false` | `false` disarms regardless of `x`/`y` |
 
 ```bash
 # Arm at (256, 120)
 curl -X POST 'http://127.0.0.1:6128/api/raster_bp?x=256&y=120'
 
 # Disarm
-curl -X POST 'http://127.0.0.1:6128/api/raster_bp?enable=0'
+curl -X POST 'http://127.0.0.1:6128/api/raster_bp?enable=false'
 ```
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`  
-**Error**: `400 application/json` — `{"error":"query parameter \"x\" must be between 0 and 65535","field":"x"}`
+**Response**: `200 application/json` — `{"cmd_seq":N}`  
+**Error**: `400 application/json` — `{"error":"field \"x\" must be between 0 and 65535","field":"x"}`
 
 ---
 
@@ -1888,14 +2199,14 @@ Changes the UI language.
 
 **Body**: `application/json` — `{"lang":"fr"}`
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`  
+**Response**: `200 application/json` — `{"cmd_seq":N}`  
 **Error**: `400 application/json` — `{"error":"invalid lang"}`
 
 ---
 
 ## Disk Endpoints
 
-### `GET /api/disk?drive=<0|1>`
+### `GET /api/disk?drive=<A|B>`
 
 Scored/sorted catalog of the disk mounted on a drive, computed by the same
 disk-autorun heuristic that drives `--autorun`, Ctrl+drop, and the Qt/imgui
@@ -1907,13 +2218,13 @@ disk; `cpm` and `unknown` disks always report an empty list.
 
 | Parameter | Type | Default | Effect |
 |---|---|---|---|
-| `drive` | integer | `0` | Drive to read, `0` (A) or `1` (B) |
+| `drive` | string | `A` | Drive to read: `A` or `B` |
 
 **Response**: `200 application/json`
 
 ```json
 {
-  "drive": 0,
+  "drive": "A",
   "type": "amsdos",
   "catalog": [
     {"name": "GAME", "ext": "BIN", "hidden": false, "read_only": false, "score": 110},
@@ -1927,7 +2238,7 @@ unrecognized/corrupt catalog). `score` is only meaningful relative to other
 entries on the same disk — higher sorts first; it is not comparable across
 disks or across requests to different drives.
 
-**Error**: `400 application/json` — `{"error":"field \"drive\" must be 0 (A) or 1 (B)"}`
+**Error**: `400 application/json` — `{"error":"field \"drive\" must be A or B"}`
 
 ---
 
@@ -1941,21 +2252,21 @@ Disk management: create a blank disk or save (download) the current disk image.
 |---|---|---|---|
 | `action` | string | `"create"` | Insert a blank formatted DSK into the given drive |
 | `action` | string | `"save"` | Export the current DSK image as a file download |
-| `drive` | integer | `0` (A) or `1` (B) | Target drive (default `0`) |
+| `drive` | string | `A` | Target drive: `A` or `B` |
 
 ```bash
 # Create a blank disk in drive A
 curl -X POST http://127.0.0.1:6128/api/disk \
      -H 'Content-Type: application/json' \
-     -d '{"action":"create","drive":0}'
+     -d '{"action":"create","drive":"A"}'
 
 # Download current disk A as a DSK file
 curl -X POST http://127.0.0.1:6128/api/disk \
      -H 'Content-Type: application/json' \
-     -d '{"action":"save","drive":0}' -o disk_A.dsk
+     -d '{"action":"save","drive":"A"}' -o disk_A.dsk
 ```
 
-**Create response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`  
+**Create response**: `200 application/json` — `{"cmd_seq":N}`  
 **Save response**: `200 application/octet-stream` — attachment `disk_A.dsk` (or `disk_B.dsk`)  
 **Save error** (no disk or failed): `500 application/json` — `{"error":"no disk or save failed"}`
 
@@ -1963,12 +2274,11 @@ curl -X POST http://127.0.0.1:6128/api/disk \
 
 ## Media Loading
 
-### `POST /api/media?name=<filename>&drive=<0|1>&crtc=<keep|sna>`
+### `POST /api/media?name=<filename>&drive=<A|B>&crtc=<keep|sna>`
 
 Loads a media file into the emulator from the raw request body — the SNA/DSK/
-HFE/IPF/CPR/CRO/BIN counterpart of drag-and-drop or the frontend's `Ctrl+O`
-file picker (`.cdt` is not currently supported here, see the format table
-below). The format is autodetected from content (magic bytes), same as
+HFE/IPF/CDT/CPR/CRO/BIN counterpart of drag-and-drop or the frontend's `Ctrl+O`
+file picker. The format is autodetected from content (magic bytes), same as
 everywhere else in the app; `name` only matters for a headerless raw
 `.bin`/`.amsdos` payload, which cannot be autodetected and is instead routed
 by extension (see below).
@@ -1980,16 +2290,26 @@ by extension (see below).
 | Parameter | Type | Default | Effect |
 |---|---|---|---|
 | `name` | string (URL-encoded) | — | Filename, e.g. `game.dsk`. Required for `.bin`/`.amsdos`; used to label the loaded media otherwise. |
-| `drive` | `0` or `1` | `0` | Target floppy drive for DSK/HFE/IPF images (A/B) |
+| `drive` | `A` or `B` | `A` | Target floppy drive for DSK/HFE/IPF images |
 | `crtc` | `keep` or `sna` | `sna` | SNA only. A v3 snapshot names its CRTC type (byte `0xA4`) and loading it switches the machine to it. `keep` puts back the CRTC emulated before the load — so `POST /api/config {"crtc_type":N}` then `?crtc=keep` runs the snapshot on CRTC N without a hard reset. Only within the same side of the Plus boundary: CRTC 3 (Plus ASIC) and 0/1/2/4 (classic) do not mix; across it the snapshot's CRTC is used and a warning is logged. Read the outcome in `emu.crtc_type` once `emu.applied_cmd_seq` reaches the `cmd_seq`. |
+| `pause` | boolean | `false` | `true` pauses right after a successful load, before its first instruction runs, so breakpoints can be armed on start-up code that runs once. Resume with `POST /api/run {"action":"resume"}`: the instruction at the entry PC then runs even under a breakpoint, so set breakpoints on a later address. Not applied when the load fails |
+
+A `.cpr` carries no CRTC type: loading one puts a classic machine on a 6128 Plus and a Plus or GX4000 on CRTC 3, whatever a previous SNA had imposed.
+
+An uploaded disk has no file on the host: what the CPC writes to it stays in
+memory and is never autosaved; `POST /api/disk {"action":"save"}` returns the
+image to keep it. Before a disk is replaced, the outgoing disk's unsaved writes
+go back to its file; an image the core refuses puts the previous disk back in
+the drive.
 
 Like the other mutating routes, the request only enqueues the load; it is
 applied on the main thread at the next loop iteration (`Core_*` calls are not
 safe from the web server's thread). The response confirms the upload was
 queued, not that the load succeeded — wait for `emu.applied_cmd_seq` to reach
-the returned `cmd_seq`, then check the application log, or a
-follow-up `GET /api/state` / `GET /api/fdc` (disk activity) or `GET
-/api/basic_state` (SNA restores BASIC state) to confirm the effect.
+the returned `cmd_seq`, then look for that `cmd_seq` in `emu.failed_cmds`
+(absent = loaded). Two uploads sent back to back both load, in order. Plain
+text named `.bas` (BASIC source: send it to `POST /api/basic`) or `.csl`/`.lua`
+(send it to `POST /api/script`) is refused with `400` at once.
 
 Supported formats and how each is detected:
 
@@ -1999,14 +2319,15 @@ Supported formats and how each is detected:
 | `.dsk` (standard/extended) | content (`MV - CPCEMU` / `MV - CPC Disk-File` / `EXTENDED CPC DSK` magic) | Inserted into `drive` |
 | `.hfe` | content (`HXCPICFE` magic) | Inserted into `drive` |
 | `.ipf` | content (`CAPS` magic) | Inserted into `drive` |
-| `.cpr` cartridge | content (`RIFF...AMS` magic) | Loaded as a standard cartridge |
-| `.cro` ROM container | content (`RIFF...CRO ` magic) | Validated as a whole first: an invalid file loads nothing (the response is still `ok`, the log names the error). A CRO with cartridge banks replaces the cartridge and switches a classic model to a 6128+; one without banks adds its ROMs. Hard reset afterwards |
+| `.cdt` tape | content (`ZXTape!` magic) | Inserted in the tape deck |
+| `.cpr` cartridge | content (`RIFF...AMS` magic) | Loaded as a standard cartridge; a classic model switches to a 6128+ first. Hard reset afterwards. A file the core rejects is not loaded (listed in `emu.failed_cmds`) but the model switch stays: `POST /api/config` `cpc_model` to go back |
+| `.cro` ROM container | content (`RIFF...CRO ` magic) | Validated as a whole first: an invalid file loads nothing (listed in `emu.failed_cmds`, the log names the error). A CRO with cartridge banks replaces the cartridge and switches a classic model to a 6128+; one without banks adds its ROMs. Hard reset afterwards |
 | `.bin`/`.amsdos` | **filename extension**, not content | AMSDOS-header binaries load directly; a headerless raw binary needs an explicit load address via `name=game@4000.bin` (optionally `@ENTRY`), e.g. `name=game@4000@4000.bin`. Addresses are four hex digits, flat 16-bit — no `Bnn:` prefix (its `:` is illegal in a Windows filename). The Qt/imgui **Save binary file** dialog writes names in this same form |
-| anything else (including `.cdt` tape) | fallback — no signature matched | **Known limitation**: unlike `.bin`/`.amsdos`, `.cdt` has no content signature and is *not* routed by filename extension either — the `name=` hint only special-cases `.bin`/`.amsdos`. A `.cdt` posted here currently falls through to the raw-binary path and will not load as a tape. This also affects SDL2/Qt drag-and-drop, not just this endpoint; tracked separately, not fixed by this doc update. |
+| anything else | fallback — no signature matched | Treated as a headerless binary: loads only with an address in `name`, else listed in `emu.failed_cmds` |
 
 ```bash
 # Insert a DSK into drive A
-curl -X POST 'http://127.0.0.1:6128/api/media?name=game.dsk&drive=0' \
+curl -X POST 'http://127.0.0.1:6128/api/media?name=game.dsk&drive=A' \
      -H 'Content-Type: application/octet-stream' \
      --data-binary @game.dsk
 
@@ -2021,7 +2342,7 @@ curl -X POST 'http://127.0.0.1:6128/api/media?name=game@4000.bin' \
      --data-binary @game.bin
 ```
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`
+**Response**: `200 application/json` — `{"cmd_seq":N}`
 **Error** (empty body): `400 application/json` — `{"error":"empty body: expected the raw media file bytes"}`
 
 **Native-transport only**: this endpoint requires the socket server (SDL2/Qt/
@@ -2032,29 +2353,60 @@ that target instead.
 
 ---
 
+### `GET /api/snapshot`
+
+Saves the current machine state as a `.sna` snapshot and streams it back in the response. The emulator writes no file: the client keeps the bytes wherever it wants, so this works against a remote emulator too. The snapshot is the same one `save_snapshot_to` writes for the snapshot keys and the CSL `snapshot` function.
+
+No parameters.
+
+```bash
+curl -s http://127.0.0.1:6128/api/snapshot -o amspirit_snapshot.sna
+
+# Load it back later (same machine or another one)
+curl -X POST 'http://127.0.0.1:6128/api/media?name=amspirit_snapshot.sna' \
+     -H 'Content-Type: application/octet-stream' \
+     --data-binary @amspirit_snapshot.sna
+```
+
+**Response**: `200 application/octet-stream` — attachment `amspirit_snapshot.sna`  
+**Error** (the core could not write a snapshot): `500 application/json` — `{"error":"snapshot failed"}`
+
+The state is read live on the web thread, without a lock, like `GET /api/state`, so a snapshot taken while the emulator runs may not be a consistent instant. Pause first (`POST /api/run {"action":"pause"}`) for a clean image.
+
+---
+
 ## Keyboard Remapping
 
 ### `POST /api/keymap`
 
-Applies a live keymap binding change — remaps a physical key to a different CPC VK code.
+Remaps one host key: it types another CPC character from now on.
 
 **Body**: `application/json`
 
 | Field | Type | Role |
 |---|---|---|
-| `kc` | hex string | Platform keycode (SDL keycode as `"0x..."`or decimal) |
-| `vk` | integer | CPC VK code for normal press (0–0xFF) |
-| `vk_s` | integer | CPC VK code for shifted press (omit or same as `vk` if no distinction) |
-| `nomod` | boolean | Suppress CPC Shift while this key is active |
+| `host_key` | string | The host key to remap, as the character it types (`"w"`, `"é"`) or `U+XXXX` — one character, never a key name |
+| `types` | string | The CPC character it should now produce: one of the `types` of `GET /api/keymap` (a character, or `U+XXXX`) |
 
 ```bash
 curl -X POST http://127.0.0.1:6128/api/keymap \
      -H 'Content-Type: application/json' \
-     -d '{"kc":"0x61","vk":1,"vk_s":1,"nomod":false}'
+     -d '{"host_key":"w","types":"z"}'
 ```
 
-**Response**: `200 application/json` — `{"ok":true,"cmd_seq":N}`  
-**Error**: `400 application/json` — e.g. `{"error":"missing field \"kc\": the platform keycode to remap","field":"kc"}` (see "Request bodies and errors" above)
+The binding copies the entry of the *CPC character* from the ROM language's
+table, so a remap follows the firmware's nationalisation, SHIFT included: on an
+FR ROM, `"types":"1"` holds SHIFT, as typing `1` does. It does not name a
+physical CPC key — for that, use `POST /api/keypress`. A `types` the CPC does not
+type for the current ROM language is refused with 400.
+
+The remap is applied by the emulation loop (`applied_cmd_seq >= cmd_seq`) and
+saved to the keymap file as an **override** of the language table: only the
+entries that differ are written, so a later ROM-language change is not frozen
+out. A **stale** `keymap.cfg` silently overrides the table — delete it to undo.
+
+**Response**: `200 application/json` — `{"cmd_seq":N}`  
+**Error**: `400 application/json` — e.g. `{"error":"missing field \"host_key\": ...","field":"host_key"}` (see "Request bodies and errors" above)
 
 ---
 
@@ -2086,8 +2438,12 @@ curl -X POST http://127.0.0.1:6128/api/keymap \
 | GET | `/api/ram?addr=N&len=N[&bank=N][&view=cpu]` | Read bytes from RAM (raw, a given 16K bank, or CPU-visible view) |
 | POST | `/api/ram` | Write bytes to RAM (optional execution) |
 | POST | `/api/exec` | Redirect Z80 PC |
-| POST | `/api/step` | Execute one Z80 instruction, then pause |
-| POST | `/api/z80_bp` | Set/clear Z80 PC breakpoints |
+| POST | `/api/run` | Execution control: pause, resume, reset, step (Z80 or BASIC) |
+| POST | `/api/step[?over=true]` | Execute one Z80 instruction (or step over a CALL), then pause |
+| POST | `/api/z80_bp` | Deprecated: use `PUT /api/breakpoints`. Set/clear Z80 PC breakpoints |
+| GET | `/api/breakpoints` | Everything armed: Z80, BASIC and raster breakpoints |
+| PUT | `/api/breakpoints` | Replace the Z80, BASIC and/or raster breakpoints with the document GET returns |
+| DELETE | `/api/breakpoints` | Clear every breakpoint (Z80, BASIC, raster) |
 | GET | `/api/history` | Last executed Z80 instructions (depth set by `history_size`) |
 | GET | `/api/codemap` | Executed-instruction bitmap (code/data zones) |
 | DELETE | `/api/codemap` | Reset the executed-instruction bitmap + history |
@@ -2099,22 +2455,27 @@ curl -X POST http://127.0.0.1:6128/api/keymap \
 | GET | `/api/audio` | Audio snapshot (last N frames from emulator buffer) |
 | GET | `/api/audio/record[?format=wav]` | Ring-buffer audio window (JSON or WAV download) |
 | GET | `/api/audio/devices` | List audio output devices and the current selection |
-| GET | `/api/disk?drive=<0\|1>` | Scored/sorted catalog of the disk mounted on a drive (disk-autorun heuristic) |
+| GET | `/api/plugins` | Plugin files of the plugin directory, which are attached, their parameters |
+| POST | `/api/plugins` | Attach, detach or configure a plugin of the plugin directory |
+| GET | `/api/disk?drive=<A\|B>` | Scored/sorted catalog of the disk mounted on a drive (disk-autorun heuristic) |
 | POST | `/api/disk` | Create blank disk or save/download current disk image |
-| POST | `/api/media?name=N&drive=N` | Load a SNA/DSK/HFE/IPF/CPR/CRO/BIN file from the request body (`.cdt` currently unsupported, see endpoint docs) |
-| POST | `/api/rewind/back` | Navigate the rewind one step back |
+| POST | `/api/media?name=N&drive=N` | Load a SNA/DSK/HFE/IPF/CDT/CPR/CRO/BIN file from the request body |
+| GET | `/api/snapshot` | Current machine state as a `.sna` file (streamed, not written on the emulator's disk) |
+| POST | `/api/rewind/back[?n=N&mode=navigate]` | Step the rewind back N snapshots (destructive unless `mode=navigate`) |
+| POST | `/api/rewind/forward[?n=N]` | Step the rewind forward N snapshots (after `back?mode=navigate` or a native back step) |
 | GET | `/api/beam[?crop=N]` | Current CTM beam position + crop rectangle |
 | POST | `/api/raster_bp?x=N&y=N&enable=N` | Arm/disarm a raster breakpoint |
 | POST | `/api/keytype` | Send text to the emulator (autotype) |
-| POST | `/api/keypress` | Send a single CPC virtual key code |
-| GET | `/api/keymap` | Current keyboard mapping as JSON (for UI display) |
-| POST | `/api/keymap` | Apply a live keymap binding change |
-| POST | `/api/basic[?reset=1][?run=1]` | Inject a Locomotive BASIC program into RAM |
+| POST | `/api/keypress` | Press, hold or release a single CPC key, by name |
+| POST | `/api/joystick` | Hold a joystick state (directions and fire buttons) until released |
+| GET | `/api/keymap` | Host key to CPC character mapping, plus the emulator hotkeys |
+| POST | `/api/keymap` | Remap one host key to type another CPC character |
+| POST | `/api/basic[?reset=true][?run=true]` | Inject a Locomotive BASIC program into RAM |
 | GET | `/api/basic_state` | BASIC interpreter state (pointers, current line/statement) |
-| GET | `/api/basic_export[?verbose=1]` | Export (detokenize) the current BASIC program as source |
+| GET | `/api/basic_export[?verbose=true]` | Export (detokenize) the current BASIC program as source |
 | GET | `/api/basic_listing` | Structured listing: lines + statements + RAM addresses + referenced vars |
-| POST | `/api/basic_step[?mode=line]` | Step to the next BASIC statement (or line) |
-| POST | `/api/basic_bp` | Set the BASIC line-breakpoint set (comma-separated line numbers) |
+| POST | `/api/basic_step[?mode=line][&over=true]` | Step to the next BASIC statement (or line, or over a GOSUB) |
+| POST | `/api/basic_bp` | Deprecated: use `PUT /api/breakpoints`. Set the BASIC breakpoint set (comma-separated statement addresses) |
 | POST | `/api/basic_runto?line=N` / `?addr=N` | Run to a BASIC line / statement, then pause |
 | GET | `/api/scan_ptr` | Diagnostic: find RAM words pointing into the BASIC program |
 | GET | `/console` | Interactive Lua console page (see below) |
@@ -2152,13 +2513,18 @@ while (!quit) {
         }
         // Applied in FIFO order: several requests queued in the same tick must
         // all land, not coalesce onto a single overwritable slot.
-        for (const WebRamWrite& w : pending.ram_writes) {
+        for (const WebCpuOp& op : pending.cpu_ops) {
+            if (op.is_z80) {
+                for (const WebZ80RegWrite& r : op.regs)
+                    Core_z80_Write_Register(r.core_reg, r.value);
+                continue;
+            }
+            const WebRamWrite& w = op.ram;
             uint8_t* ram = emu_state.Memory_RAM;
             for (size_t i = 0; i < w.data.size(); ++i)
                 ram[w.addr + i] = w.data[i];
             if (w.exec)
                 Core_z80_Write_Register(CORE_Z80_REGISTRE_PC, w.entry);
-            ws_opts.ram_apply_seq.fetch_add(1, std::memory_order_relaxed);
         }
     }
     // Runs a queued POST /api/eval and publishes what GET /api/script and

@@ -12,7 +12,7 @@ LLM client attached).
 ## Setup
 
 ```bash
-cd tools/amspirit_lite_mcp
+cd tools/mcp-emulator
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
@@ -29,7 +29,7 @@ via `make debug`/`make release`):
 Claude Code:
 
 ```bash
-claude mcp add amspirit-emulator -- /path/to/tools/amspirit_lite_mcp/.venv/bin/python /path/to/tools/amspirit_lite_mcp/server.py
+claude mcp add amspirit-emulator -- /path/to/tools/mcp-emulator/.venv/bin/python /path/to/tools/mcp-emulator/server.py
 ```
 
 Claude Desktop (`claude_desktop_config.json`):
@@ -38,8 +38,8 @@ Claude Desktop (`claude_desktop_config.json`):
 {
   "mcpServers": {
     "amspirit-emulator": {
-      "command": "/path/to/tools/amspirit_lite_mcp/.venv/bin/python",
-      "args": ["/path/to/tools/amspirit_lite_mcp/server.py"]
+      "command": "/path/to/tools/mcp-emulator/.venv/bin/python",
+      "args": ["/path/to/tools/mcp-emulator/server.py"]
     }
   }
 }
@@ -55,19 +55,19 @@ frontend was started with a different `--web-server` port/bind address.
 | `emu_state` | `GET /api/state` |
 | `emu_ping` | `GET /api/ping` |
 | `license_info` | `GET /api/license` — AMSpiriT's license and attribution request |
-| `emu_control` | `POST /api/config` (pause/resume, soft/hard reset) |
+| `emu_control` | `POST /api/run` (pause/resume, soft/hard reset) |
 | `ram_read` | `GET /api/ram` |
 | `ram_write` | `POST /api/ram` |
-| `z80_step` | `POST /api/step` |
+| `z80_step` | `POST /api/run` (`action: step`) |
 | `z80_history` | `GET /api/history` |
 | `z80_codemap` | `GET`/`DELETE /api/codemap` |
 | `memory_map` | `GET /api/memmap` |
-| `z80_breakpoints` | `POST /api/z80_bp` |
+| `z80_breakpoints` | `PUT /api/breakpoints` (`z80`) |
 | `basic_state` | `GET /api/basic_state` |
 | `basic_listing` | `GET /api/basic_listing` |
 | `basic_export` | `GET /api/basic_export` |
-| `basic_breakpoints` | `POST /api/basic_bp` |
-| `basic_step` | `POST /api/basic_step` |
+| `basic_breakpoints` | `PUT /api/breakpoints` (`basic`) |
+| `basic_step` | `POST /api/run` (`action: step`, `target: basic`) |
 | `basic_runto` | `POST /api/basic_runto` |
 | `keyboard_type` | `POST /api/keytype` (+ polls `emu.autotyping` to completion) |
 | `keyboard_press` | `POST /api/keypress` |

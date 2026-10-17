@@ -36,7 +36,6 @@ from amspirit_debug_gui.tab_poke import PokeTab
 from amspirit_debug_gui.tab_script import ScriptTab
 from amspirit_debug_gui.tab_settings import SettingsTab
 
-MODEL_NAMES = {0: "464", 1: "664", 2: "6128", 4: "6128+", 5: "464+", 6: "GX4000"}
 CRTC_NAMES = {0: "Type 0", 1: "Type 1", 2: "Type 2", 3: "Type 3", 4: "Type 4"}
 
 
@@ -429,7 +428,7 @@ class DebugGuiApp(tk.Tk):
             return
         self._dot.itemconfigure(self._dot_item, fill=theme.C["ok"])
         emu = result.get("emu", {})
-        self._model_var.set(MODEL_NAMES.get(emu.get("cpc_model"), "?"))
+        self._model_var.set(emu.get("cpc_model", "?"))
         self._crtc_var.set(CRTC_NAMES.get(emu.get("crtc_type"), "?"))
         fps = emu.get("fps")
         self._fps_var.set(f"{fps:.1f}" if isinstance(fps, (int, float)) else "--")
@@ -444,13 +443,22 @@ class DebugGuiApp(tk.Tk):
                                   style="Pause.TLabel" if paused else "Run.TLabel")
 
     def _toggle_pause(self):
-        self._post_config({"paused": not self._paused})
+        self._post_run({"action": "resume" if self._paused else "pause"})
 
     def _soft_reset(self):
-        self._post_config({"do_soft_reset": True})
+        self._post_run({"action": "reset", "kind": "soft"})
 
     def _hard_reset(self):
-        self._post_config({"do_hard_reset": True})
+        self._post_run({"action": "reset", "kind": "hard"})
+
+    def _post_run(self, body: dict):
+        def done(_result, error):
+            if error is not None:
+                self.set_status(f"run control failed: {self.describe_error(error)}", error=True)
+            else:
+                self.poller.trigger("ping")
+
+        self.run_async(lambda: self.client.post("/api/run", body), done)
 
     def _post_config(self, body: dict):
         def done(_result, error):

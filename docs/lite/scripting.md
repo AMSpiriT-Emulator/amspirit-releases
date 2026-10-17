@@ -91,6 +91,7 @@ These functions have existed since the beginning and remain available without a 
 ```lua
 wait(usec)           -- wait N microseconds (rounded up to the next frame)
 wait_frames(n)       -- wait N frames (1 frame = ~20 ms at 50 Hz)
+                     -- both count only frames the machine runs: a pause holds them
 wait_vsyncoffon()    -- wait for the next VSYNC rising edge
 wait_driveonoff(n)   -- wait N drive motor ON/OFF cycles (default 1)
 wait_ssm0000()       -- wait for the ED 00 ED 00 sequence in the Z80 (legacy alias for wait_ssm("0000"))
@@ -180,20 +181,33 @@ crtc_select(n)       -- change CRTC type (0–4) and reinitialize
 crtc_select("1A")    -- CRTC 1, revision A (same as crtc_select(1))
 crtc_select("1B")    -- CRTC 1, revision B
 cpc_model(n)         -- change CPC model (CORE_CPC_* constant) and reinitialize
+memory_exp(n)        -- RAM size: 0 = 128 Ko, 1 = 256 Ko expansion (320 Ko),
+                     -- 4 = 512 Ko expansion (576 Ko); hard reset
 ```
+
+`crtc_select` and `cpc_model` rebuild the machine the way the menus and
+`POST /api/config` do: ROMs reloaded, the choice kept by the frontend (title,
+menus, and later reinits — a `memory_exp` after `crtc_select("1B")` stays on
+1B). Each raises a script error when the firmware does not load. Select the
+model first: a CRTC the model cannot carry (3 on a classic CPC, anything but 3
+on a Plus) is refused. `memory_exp` 2 (silicon disc) and 3 (4M) are not
+emulated and raise an error.
 
 ### Media
 
 ```lua
-disk_insert([drive,] path)   -- insert a DSK/HFE/IPF into drive A
-                              -- the drive parameter ("A"/"B") is parsed but ignored
+disk_insert([drive,] path)   -- insert a DSK/HFE/IPF into drive "A" (default) or "B"
+disk_eject([drive])          -- empty drive "A" (default) or "B", its writes saved first
 disk_dir(path)               -- search prefix for disk_insert
 tape_insert(path)            -- insert a CDT/WAV cassette
 tape_dir(path)
 tape_play()
 tape_stop()
 tape_rewind()
-snapshot_load(path)          -- load an SNA snapshot
+snapshot_load(path [, keep_crtc])
+                             -- load an SNA snapshot; keep_crtc = true keeps the
+                             -- emulated CRTC instead of the one the snapshot
+                             -- names (same as POST /api/media?crtc=keep)
 snapshot_dir(path)
 snapshot()                   -- save a snapshot (name/directory configurable)
 snapshot_name(name)          -- filename without extension
@@ -477,12 +491,17 @@ Returns a table with all registers:
 | `IX`, `IY` | Index registers |
 | `I`, `R` | Interrupt / refresh registers |
 | `IFF1`, `IFF2` | Interrupt flip-flops (0 or 1) |
+| `int_pending` | `true` while INT is asserted and not yet acknowledged (held through a `di`) |
 | `IM` | Interrupt mode (0, 1 or 2) |
 | `ticks` | NOPs (1 µs each) since the last hard reset, SNA load or rewind step — not reset by a soft reset. Subtract two readings to time code within one run (read-only, ignored by `setZ80`) |
 
 ```lua
 cpc.setZ80({PC=0x4000, A=0x3E})   -- partial update, other registers unchanged
 ```
+
+`PC` is written as is: the ROM paging is not touched, so a jump to `&C000`
+with the upper ROM paged in runs the ROM, not the RAM under it (same as
+`POST /api/z80`; `POST /api/exec` is the call that pages a covering ROM out).
 
 Example — wait for the PC to reach an address:
 
@@ -498,17 +517,26 @@ screenshot()
 ### RAM
 
 ```lua
-local data = cpc.getRam(addr, len)
+local data = cpc.getRam(addr, len [, bank])
 -- returns a Lua binary string of `len` bytes starting at `addr`
 -- string.byte(data, 1)  → first byte
 -- string.byte(data, i)  → byte at offset i (1-indexed)
 ```
 
 ```lua
-cpc.setRam(addr, data)
+cpc.setRam(addr, data [, bank])
 -- `data` is a Lua binary string
 -- cpc.setRam(0x4000, "\x3E\x01\xCD\x00\xBB")
 ```
+
+Without `bank` both work on the base 64 Ko (banks 0–3), whatever is paged in.
+`bank` counts 16 Ko banks, like `GET`/`POST /api/ram`: bank 4 is the first
+bank of the first expansion, and an `addr` above `&3FFF` carries into the
+following banks (`cpc.setRam(0x4000, d, 4)` writes bank 5). A bank the machine
+does not have at its current RAM size (`memory_exp`), or a write running past
+the end of its 64 Ko block, raises an error — nothing is written, never
+clipped. A read is cut at the end of its 64 Ko block. `poke` stays on the base
+64 Ko.
 
 Example — read a calculation result:
 
@@ -700,6 +728,6 @@ kill $PID
 ## Known Limitations
 
 - `csl_load` cannot call `wait*` in the loaded subscript (Lua limitation: `lua_yield` through `lua_pcall` raises an error). Use `csl_load` only for configuration files without waits.
-- Drive B (`disk_insert B ...`) is parsed but ignored — only drive A is supported.
+- Scripts cannot load cartridges (`.cpr`/`.cro`) or binaries; use `POST /api/media`. `gate_array`, `rom_dir`, `rom_config`, `snapshot_version` and `key_from_file` are accepted and ignored.
 - `wait_ssm`/`wait_ssm0000` requires SSM mode to be active. It is activated automatically when a script calls either function, or manually with `--ssm`.
 - `cpc.setRam` takes only a Lua binary string. To build byte sequences: `string.char(0x3E, 0x01, 0xCD, 0x00, 0xBB)`.

@@ -1,7 +1,7 @@
 """Settings tab: read-only view of the current keyboard mapping.
 
-The original page is read-only here too (remapping goes through
-POST /api/keymap, which exists server-side but this UI never calls it).
+Read-only here too (remapping goes through POST /api/keymap, which exists
+server-side but this UI never calls it).
 """
 
 from __future__ import annotations
@@ -23,16 +23,15 @@ class SettingsTab(ttk.Frame):
     def _build(self):
         top = ttk.Frame(self)
         top.pack(side=tk.TOP, fill=tk.X)
-        self._layout_var = tk.StringVar(value="Layout: --")
-        ttk.Label(top, textvariable=self._layout_var, style="Value.TLabel").pack(side=tk.LEFT)
+        ttk.Label(top, text="Host key -> CPC character (follows the ROM language)", style="Value.TLabel").pack(side=tk.LEFT)
 
         self._tree = ttk.Treeview(
-            self, columns=("kc", "vk", "vk_shift", "nomod"), show="headings", height=24
+            self, columns=("host", "types", "shift", "ctrl"), show="headings", height=24
         )
-        self._tree.heading("kc", text="SDL keycode")
-        self._tree.heading("vk", text="VK (no shift)")
-        self._tree.heading("vk_shift", text="VK (shift)")
-        self._tree.heading("nomod", text="no-mod")
+        self._tree.heading("host", text="Host key")
+        self._tree.heading("types", text="Types")
+        self._tree.heading("shift", text="Shift")
+        self._tree.heading("ctrl", text="Ctrl")
         self._tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=(8, 0))
 
         self._status_var = tk.StringVar()
@@ -43,15 +42,16 @@ class SettingsTab(ttk.Frame):
             if error is not None:
                 self._status_var.set(f"read failed: {self.app.describe_error(error)}")
                 return
-            self._layout_var.set(f"Layout: {result.get('layout', '?')}")
             self._tree.delete(*self._tree.get_children())
-            for entry in result.get("mapping", []):
-                kc = entry.get("sdl_keycode")
-                kc_display = f"{kc:#x}" if isinstance(kc, int) else str(kc)
+            keys = result.get("keys", [])
+            for entry in keys:
+                types = "(custom)" if entry.get("custom") else entry.get("types", "")
                 self._tree.insert(
                     "", tk.END,
-                    values=(kc_display, entry.get("vk"), entry.get("vk_with_shift"), entry.get("nomod")),
+                    values=(entry.get("host_key"), types, bool(entry.get("shift")), bool(entry.get("ctrl"))),
                 )
-            self._status_var.set(f"{len(result.get('mapping', []))} key(s)")
+            for entry in result.get("hotkeys", []):
+                self._tree.insert("", tk.END, values=(entry.get("host_key"), "(emulator hotkey)", "", ""))
+            self._status_var.set(f"{len(keys)} key(s)")
 
         self._panel.run(lambda: self.app.client.get("/api/keymap"), done)

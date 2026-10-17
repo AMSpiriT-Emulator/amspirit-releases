@@ -17,7 +17,7 @@ class DiskTab(ttk.Frame):
         self._build()
 
     def _build(self):
-        for drive, letter in ((0, "A"), (1, "B")):
+        for drive, letter in (("A", "A"), ("B", "B")):
             frame = ttk.LabelFrame(self, text=f"Drive {letter}", padding=8)
             frame.pack(side=tk.TOP, fill=tk.X, pady=(0, 10))
             ttk.Button(frame, text="Create blank disk", command=lambda d=drive: self._create(d)).pack(side=tk.LEFT)
@@ -42,13 +42,13 @@ class DiskTab(ttk.Frame):
         self._status_var = tk.StringVar()
         ttk.Label(self, textvariable=self._status_var, style="Muted.TLabel").pack(side=tk.TOP, anchor="w")
 
-    def _create(self, drive: int):
+    def _create(self, drive: str):
         def done(_result, error):
             self._status_var.set(f"create failed: {self.app.describe_error(error)}" if error else f"blank disk inserted in drive {drive}")
 
         self.app.run_async(lambda: self.app.client.post("/api/disk", {"action": "create", "drive": drive}), done)
 
-    def _save(self, drive: int, letter: str):
+    def _save(self, drive: str, letter: str):
         path = filedialog.asksaveasfilename(defaultextension=".dsk", initialfile=f"disk_{letter}.dsk",
                                               filetypes=[("DSK images", "*.dsk")])
         if not path:
@@ -65,7 +65,7 @@ class DiskTab(ttk.Frame):
         body = compact_json({"action": "save", "drive": drive})
         self.app.run_async(lambda: self.app.client.request("POST", "/api/disk", body, "application/json"), done)
 
-    def _load_media(self, drive: int):
+    def _load_media(self, drive: str):
         filetypes = [
             ("All Supported", "*.sna *.dsk *.hfe *.ipf *.cpr *.cro *.bin"),
             ("SNA snapshots", "*.sna"),

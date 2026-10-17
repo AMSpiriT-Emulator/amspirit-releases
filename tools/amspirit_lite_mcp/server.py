@@ -97,14 +97,52 @@ def emu_control(paused: bool | None = None, soft_reset: bool = False, hard_reset
     """Pause/resume the emulator and/or trigger a soft or hard reset.
     Pausing is required before z80_step or ram_write with execute=True in
     some workflows. Omit paused to leave the pause state unchanged."""
-    body = {}
+    result: dict = {"ok": True}
     if paused is not None:
-        body["paused"] = paused
-    if soft_reset:
-        body["do_soft_reset"] = True
+        result = _request("POST", "/api/run", json={"action": "pause" if paused else "resume"})
     if hard_reset:
-        body["do_hard_reset"] = True
+        result = _request("POST", "/api/run", json={"action": "reset", "kind": "hard"})
+    elif soft_reset:
+        result = _request("POST", "/api/run", json={"action": "reset", "kind": "soft"})
+    return result
+
+
+@mcp.tool()
+def emu_config() -> dict:
+    """Current emulator configuration: CPC model, CRTC, RAM size, ROM
+    language, keyboard mapping, volume, and the rewind settings
+    (rw_enabled/rw_interval/rw_slots) plus the Z80 history depth
+    (history_size)."""
+    return _request("GET", "/api/config")
+
+
+@mcp.tool()
+def rewind_config(enabled: bool | None = None, interval: int | None = None, slots: int | None = None) -> dict:
+    """Configure the rewind buffer (in-RAM snapshots you can step back
+    through). interval = frames between snapshots (1-500, 50 = 1 s), slots =
+    buffer capacity (10-2000, ~1.6 MB RAM each). Any change clears the buffer.
+    For debugging use enabled=True, interval=1 (step back one frame at a time)
+    and a moderate buffer, e.g. slots=300 (~6 s of history, ~500 MB). Current
+    values: emu_config's rw_enabled/rw_interval/rw_slots. Omitted arguments are
+    left unchanged."""
+    body = {}
+    if enabled is not None:
+        body["rw_enabled"] = enabled
+    if interval is not None:
+        body["rw_interval"] = interval
+    if slots is not None:
+        body["rw_slots"] = slots
     return _request("POST", "/api/config", json=body)
+
+
+@mcp.tool()
+def rewind_back() -> dict:
+    """Step the machine one rewind snapshot back in time (one frame with
+    rewind_config(interval=1)). Requires an active rewind (emu.rw_active in
+    emu_state) and a paused emulator; emu.rw_steps_back tells how many steps
+    remain. Inspect the state (emu_state, ram_read, z80_history, screenshot)
+    after each step to find where things went wrong."""
+    return _request("POST", "/api/rewind/back")
 
 
 @mcp.tool()
@@ -173,21 +211,36 @@ def z80_write(PC: int | None = None, SP: int | None = None, A: int | None = None
 
 
 @mcp.tool()
-def z80_step() -> dict:
+def z80_step(over: bool = False) -> dict:
     """Execute exactly one Z80 instruction then re-pause. The emulator must
-    already be paused (see emu_control)."""
-    return _request("POST", "/api/step")
+    already be paused (see emu_control). With over=True a CALL / CALL cc is
+    stepped over: the subroutine runs and the CPU pauses on the instruction
+    after the CALL (a breakpoint inside it, or any other stop, ends the
+    step-over there); any other instruction is a plain step."""
+    return _request("POST", "/api/run", json={"action": "step", "over": over})
 
 
 @mcp.tool()
-def z80_history() -> dict:
-    """Return the last 20 executed Z80 instructions (oldest first), as
-    {pc, hex, current_hex} triples. hex is the opcode bytes as the CPU
+def z80_history(n: int | None = None) -> dict:
+    """Return the last executed Z80 instructions (oldest first), as
+    {pc, hex, current_hex} triples plus the registers before each one. The
+    ring holds 20 instructions by default; for a longer trace call
+    history_config(size) first, then pass n to fetch only the n most recent. hex is the opcode bytes as the CPU
     actually fetched them when that instruction ran (immutable afterwards).
     current_hex is the same 4 bytes re-read right now — it differs from hex
     exactly when the code has since been self-modified, so a mismatch is
     itself a useful signal, not noise."""
+    if n is not None:
+        return _request("GET", f"/api/history?n={n}")
     return _request("GET", "/api/history")
+
+
+@mcp.tool()
+def history_config(size: int) -> dict:
+    """Set the depth of the Z80 instruction history read by z80_history
+    (1-100000, default 20, ~24 bytes per entry). Resizing empties the history
+    and clears the rewind buffer. Current value: emu_config's history_size."""
+    return _request("POST", "/api/config", json={"history_size": size})
 
 
 @mcp.tool()
@@ -209,6 +262,57 @@ def memory_map() -> dict:
 
 
 @mcp.tool()
+def rom_map() -> dict:
+    """ROM catalog: which firmware ROM, extension ROMs (R<n>:, e.g.
+    7=AMSDOS) and CPC+ cartridge banks (0-31, from a loaded CPR) are
+    currently loaded, and from which source file. Distinct from
+    memory_map(), which describes live CPU paging rather than
+    load/unload bookkeeping."""
+    return _request("GET", "/api/rommap")
+
+
+@mcp.tool()
+def plugins() -> dict:
+    """Plugins (native libraries emulating a hardware extension): the files of
+    the plugin directory, which are attached, and for an attached one its name,
+    connectors and parameters (key, type, bounds/choices, current value, and
+    'live' = applied at once, otherwise the plugin restarts to take it).
+    'supported' is false on builds that cannot load plugins."""
+    return _request("GET", "/api/plugins")
+
+
+@mcp.tool()
+def plugin_control(action: str, file: str, params: str = "", key: str = "", value: str | None = None, wait_ms: int = 3000) -> dict:
+    """Attach, detach or configure a plugin of the plugin directory. 'file' is a
+    plain file name from plugins(), never a path (a plugin is native code).
+    action='attach' (optional params="key=value,key=value"), 'detach', or
+    'set_param' (key + value, both text). The call waits up to wait_ms (0-4500;
+    0 = answer as soon as it is queued) for the emulator to apply it: a result
+    with applied=true worked, _http_status 422 means refused (error says why),
+    408 means still queued after the delay."""
+    body = {"action": action, "file": file}
+    if params:
+        body["params"] = params
+    if key:
+        body["key"] = key
+    if value is not None:
+        body["value"] = value
+    return _request("POST", "/api/plugins", json=body, params={"wait": min(max(wait_ms, 0), 4500)})
+
+
+@mcp.tool()
+def disk_catalog(drive: str = "A") -> dict:
+    """Scored/sorted catalog of the disk mounted on a drive ("A" or "B"),
+    computed by the same disk-autorun heuristic that drives --autorun,
+    Ctrl+drop, and the Qt/imgui drive menus. 'type' is 'amsdos', 'cpm' or
+    'unknown'; 'catalog' (entries with name/ext/hidden/read_only/score) is
+    only populated for an amsdos disk — empty for cpm/unknown. Higher score
+    sorts first and is only meaningful relative to other entries on the
+    same disk."""
+    return _request("GET", "/api/disk", params={"drive": drive})
+
+
+@mcp.tool()
 def z80_breakpoints(addresses: list[str]) -> dict:
     """Replace the set of Z80 PC breakpoints. Each entry is either a CPU address
     — decimal or hex ('0x...'), where bare digits are DECIMAL — or a physical
@@ -220,7 +324,21 @@ def z80_breakpoints(addresses: list[str]) -> dict:
     paging when the set is applied and stored as the bank or ROM that holds it:
     a breakpoint fires on a byte, not on an address. Pass an empty list to clear
     all. The old 'Cx:' form still works, as a DECIMAL bank index."""
-    return _request("POST", "/api/z80_bp", content=",".join(addresses))
+    return _request("PUT", "/api/breakpoints", json={"z80": addresses})
+
+
+@mcp.tool()
+def breakpoints(clear: bool = False) -> dict:
+    """Everything armed to stop the emulation: {z80: ['B04:2000', 'R07:0100',
+    'FW:0038'], basic: [{line, stmt, addr}, ...], raster: {x, y} | null}.
+    Includes breakpoints set from the native window. The z80 entries are in the
+    notation z80_breakpoints accepts (plus 'Rnn:hhhh' / 'FW:hhhh'), so to remove
+    one, read this, drop it and pass the rest back. clear=True drops every
+    breakpoint (Z80, BASIC, raster, pending run-to/step-over) at once, like
+    the native Ctrl+F9, without resuming a paused machine."""
+    if clear:
+        return _request("DELETE", "/api/breakpoints")
+    return _request("GET", "/api/breakpoints")
 
 
 @mcp.tool()
@@ -248,19 +366,22 @@ def basic_export(verbose: bool = False) -> str:
 
 @mcp.tool()
 def basic_breakpoints(lines: list[int]) -> dict:
-    """Replace the set of BASIC line breakpoints. Pass an empty list to clear
-    all. While set, the emulator pauses when execution reaches one of these
-    lines."""
-    return _request("POST", "/api/basic_bp", content=",".join(str(n) for n in lines))
+    """Replace the set of BASIC breakpoints with the first statement of each
+    given line number (a line absent from the program is refused and nothing
+    changes). Pass an empty list to clear all. While set, the emulator pauses
+    when execution reaches one of them. For a later statement of a line, call
+    the breakpoints endpoint's PUT form via api_doc('breakpoints')."""
+    return _request("PUT", "/api/breakpoints", json={"basic": [{"line": n} for n in lines]})
 
 
 @mcp.tool()
-def basic_step(mode: str = "statement") -> dict:
+def basic_step(mode: str = "statement", over: bool = False) -> dict:
     """Resume and re-pause at the next BASIC statement (mode='statement',
-    default) or the next BASIC line (mode='line'). Only meaningful while a
-    program line is executing, not in direct mode."""
-    params = {"mode": "line"} if mode == "line" else {}
-    return _request("POST", "/api/basic_step", params=params)
+    default) or the next BASIC line (mode='line'). With no program running
+    (direct mode) it executes one Z80 instruction instead. over=True steps over
+    a GOSUB: the subroutine runs and execution pauses on the following
+    statement; any other statement is a plain step."""
+    return _request("POST", "/api/run", json={"action": "step", "target": "basic", "unit": "line" if mode == "line" else "statement", "over": over})
 
 
 @mcp.tool()
@@ -296,11 +417,40 @@ def keyboard_type(text: str, wait: bool = True, timeout_s: float = 10.0) -> dict
 
 
 @mcp.tool()
-def keyboard_press(vk: int) -> dict:
-    """Send a single CPC virtual key code (CORE_rVK_* constant, 0-0xFF).
+def keyboard_press(cpc_key: str, down: bool | None = None, frames: int | None = None) -> dict:
+    """Press a single CPC key by name: A-Z, F0-F9 (numeric keypad), SPACE,
+    ENTER, TAB, ESC, DEL, CLR, COPY, SHIFT, CTRL, CAPS_LOCK, LEFT, RIGHT, UP,
+    DOWN, F_DOT and the punctuation keys - ^ @ [ ] : ; , . / \\ (case-insensitive;
+    the key legended so on the ROM language's keyboard, so a capital is the key
+    with SHIFT held). The digit keys 0-9 press nothing on their own: type digits
+    with keyboard_type.
     Delivered after any pending keyboard_type text. Prefer keyboard_type for
-    plain text; use this for non-ASCII keys (arrows, function keys, ...)."""
-    return _request("POST", "/api/keypress", json={"vk": vk})
+    plain text; use this for keys with no text form (arrows, COPY, CTRL, ...).
+    down=True holds the key until down=False, until `frames` emulated frames
+    (1-100000, only with down=True) have elapsed, or until a reset; several
+    keys can be held at once. Left unset, it is a one-shot press."""
+    body: dict = {"cpc_key": cpc_key}
+    if down is not None:
+        body["down"] = down
+    if frames is not None:
+        body["frames"] = frames
+    return _request("POST", "/api/keypress", json=body)
+
+
+@mcp.tool()
+def joystick(up: bool = False, down: bool = False, left: bool = False, right: bool = False,
+             fire1: bool = False, fire2: bool = False, fire3: bool = False,
+             frames: int | None = None, release: bool = False) -> dict:
+    """Hold a joystick state on port 0 until released. Each call states the whole
+    joystick wanted: a direction left out is released. frames (1-100000) lets go by
+    itself after that many emulated frames. release=True lets go of everything
+    (cannot be combined with a state or frames). Merged by OR with a real gamepad."""
+    body: dict = {"release": True} if release else {
+        "up": up, "down": down, "left": left, "right": right,
+        "fire1": fire1, "fire2": fire2, "fire3": fire3}
+    if frames is not None and not release:
+        body["frames"] = frames
+    return _request("POST", "/api/joystick", json=body)
 
 
 @mcp.tool()
@@ -318,6 +468,25 @@ def screenshot(crop: bool = True, full: bool = True, live: bool | None = None) -
     if isinstance(data, dict):
         raise RuntimeError(data.get("error", "no frame available"))
     return Image(data=data, format="png")
+
+
+@mcp.tool()
+def snapshot(path: str | None = None) -> dict:
+    """Save the emulator's current state as a .sna snapshot file on this
+    machine (the MCP side, not the emulator's disk). path is the file to write;
+    left unset, a timestamped file goes to the system temp directory. Load it
+    back later with POST /api/media (raw body). Returns the path and the size
+    in bytes."""
+    data = _request("GET", "/api/snapshot")
+    if isinstance(data, dict):
+        raise RuntimeError(data.get("error", "snapshot failed"))
+    if path is None:
+        import tempfile
+        import time
+        path = os.path.join(tempfile.gettempdir(), f"amspirit_snapshot_{int(time.time())}.sna")
+    with open(path, "wb") as f:
+        f.write(data)
+    return {"path": os.path.abspath(path), "bytes": len(data)}
 
 
 def _fetch_ram(addr: int = 0, length: int = 65536, bank: int = 0, view: str = "raw") -> bytearray:

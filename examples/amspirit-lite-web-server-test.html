@@ -408,7 +408,7 @@ textarea{resize:vertical;min-height:48px;width:100%}
 
 <!-- ======================= POST ENDPOINTS ======================= -->
 <h2>POST Endpoints</h2>
-<div class="body-preview">Every command below answers {"ok":true,"cmd_seq":N} as soon as it is queued. It has taken effect once GET /api/ping's emu.applied_cmd_seq is &gt;= N (a step has then executed; a resume or a BASIC step has started).</div>
+<div class="body-preview">Every command below answers {"cmd_seq":N} as soon as it is queued. It has taken effect once GET /api/ping's emu.applied_cmd_seq is &gt;= N (a step has then executed; a resume or a BASIC step has started).</div>
 
 <!-- /api/step POST -->
 <div class="endpoint POST">
@@ -517,10 +517,10 @@ textarea{resize:vertical;min-height:48px;width:100%}
     <span class="method">POST</span>
     <span class="url">/api/config</span>
   </div>
-  <div class="body-preview">Queue a config change. Fields: cpc_model, crtc_type, rom_lang, paused, do_soft_reset, do_hard_reset</div>
+  <div class="body-preview">Queue a config change. Fields: cpc_model, crtc_type, rom_lang, ram_kb, volume… (pause, resume and reset live in POST /api/run)</div>
   <div class="param-row">
     <label>JSON body</label>
-    <textarea id="config-body">{"paused":true}</textarea>
+    <textarea id="config-body">{"volume":80}</textarea>
   </div>
   <div class="controls">
     <button onclick="runPost('/api/config','config-body','resp-config-post')">Send</button>
@@ -717,10 +717,10 @@ wait(20)</textarea>
     <span class="method">POST</span>
     <span class="url">/api/keymap</span>
   </div>
-  <div class="body-preview">Remap a key: kc (keycode hex), vk (CPC VK for unshifted), vk_s (shifted), nomod (bool)</div>
+  <div class="body-preview">Remap a key: host_key (the character typed on the host), types (the CPC character it should now produce)</div>
   <div class="param-row">
     <label>JSON body</label>
-    <textarea id="keymap-body">{"kc":"0x61","vk":65,"vk_s":65,"nomod":false}</textarea>
+    <textarea id="keymap-body">{"host_key":"w","types":"z"}</textarea>
   </div>
   <div class="controls">
     <button onclick="runPost('/api/keymap','keymap-body','resp-keymap-post')">Send</button>

@@ -10,7 +10,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
-MODEL_CHOICES = [("464", 0), ("664", 1), ("6128", 2), ("6128+", 4), ("464+", 5), ("GX4000", 6)]
+MODEL_CHOICES = [(n, n) for n in ("464", "664", "6128", "6128+", "464+", "GX4000")]
 CRTC_CHOICES = [(f"Type {i}", i) for i in range(5)]
 ROM_LANG_CHOICES = ["FR", "EN", "SP", "DA"]
 SCREEN_TYPE_CHOICES = [("Colour", 0), ("Green", 1), ("Colour (ASIC)", 2), ("Green (ASIC)", 3)]
@@ -19,8 +19,8 @@ CRT_PARAMS = [
     ("curvature", 0.0, 0.03),
     ("scanline", 0.0, 1.0),
     ("sharpness", 0.0, 1.0),
-    ("maskType", 0, 4),
-    ("maskPitch", 1.0, 6.0),
+    ("mask_type", 0, 4),
+    ("mask_pitch", 1.0, 6.0),
     ("mask", 0.0, 0.25),
     ("halation", 0.0, 1.0),
     ("diffusion", 0.0, 1.0),
@@ -115,7 +115,7 @@ class ConfigTab(ttk.Frame):
                 return
             presets = result.get("presets", [])
             self._monitor_combo.configure(values=presets)
-            self._monitor_var.set(result.get("monitor_name", presets[0] if presets else ""))
+            self._monitor_var.set(result.get("monitor", presets[0] if presets else ""))
             screen_type = result.get("screen_type", 0)
             name = next((n for n, v in SCREEN_TYPE_CHOICES if v == screen_type), SCREEN_TYPE_CHOICES[0][0])
             self._screen_type_var.set(name)
@@ -128,12 +128,9 @@ class ConfigTab(ttk.Frame):
 
     def _apply_monitor(self):
         presets = list(self._monitor_combo["values"])
-        try:
-            monitor_idx = presets.index(self._monitor_var.get())
-        except ValueError:
-            monitor_idx = 0
+        monitor = self._monitor_var.get() or (presets[0] if presets else "Off")
         screen_type = dict(SCREEN_TYPE_CHOICES)[self._screen_type_var.get()]
-        body = {"monitor": monitor_idx, "screen_type": screen_type}
+        body = {"monitor": monitor, "screen_type": screen_type}
 
         def done(_result, error):
             self._status_var.set(f"apply failed: {self.app.describe_error(error)}" if error else "monitor/screen applied")
@@ -142,7 +139,7 @@ class ConfigTab(ttk.Frame):
 
     def _apply_crt(self):
         crt = {name: self._crt_vars[name].get() for name, *_ in CRT_PARAMS}
-        crt["maskType"] = int(crt["maskType"])
+        crt["mask_type"] = int(crt["mask_type"])
 
         def done(_result, error):
             self._status_var.set(f"apply failed: {self.app.describe_error(error)}" if error else "CRT parameters applied")

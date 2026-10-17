@@ -305,7 +305,7 @@ class CpuTab(ttk.Frame):
             var.set(f"{value:#06x}" if name not in ("IFF1", "IFF2", "IM") else str(value))
 
     def _step(self):
-        self.app.run_async(lambda: self.app.client.post_empty("/api/step"), self._after_step("stepped"))
+        self.app.run_async(lambda: self.app.client.post("/api/run", {"action": "step"}), self._after_step("stepped"))
 
     def _tl_back(self):
         self.app.run_async(lambda: self.app.client.post_empty("/api/tl_back"), self._after_step("stepped back"))
@@ -440,7 +440,7 @@ class CpuTab(ttk.Frame):
                 f"apply failed: {self.app.describe_error(error)}" if error else "breakpoints applied"
             )
 
-        self.app.run_async(lambda: self.app.client.post_text("/api/z80_bp", body), done)
+        self.app.run_async(lambda: self.app.client.put("/api/breakpoints", {"z80": [t.strip() for t in body.split(",") if t.strip()]}), done)
 
     def _clear_bp(self):
         self._bp_var.set("")
@@ -481,7 +481,7 @@ class CpuTab(ttk.Frame):
     # -- screen ------------------------------------------------------------------
 
     def _fetch_screenshot(self):
-        return self.app.client.get_raw("/api/screenshot?crop=1&full=1&live=0")
+        return self.app.client.get_raw("/api/screenshot?crop=true&full=true&live=false")
 
     def _refresh_screenshot(self):
         self._screen_panel.run(self._fetch_screenshot, self._on_screenshot)
@@ -527,7 +527,7 @@ class CpuTab(ttk.Frame):
                 else f"raster breakpoint armed at ({buf_x},{buf_y})"
             )
 
-        self.app.run_async(lambda: self.app.client.post_empty(f"/api/raster_bp?x={buf_x}&y={buf_y}"), done)
+        self.app.run_async(lambda: self.app.client.put("/api/breakpoints", {"raster": {"x": buf_x, "y": buf_y}}), done)
 
     def _disarm_raster_bp(self):
         def done(_result, error):
@@ -535,4 +535,4 @@ class CpuTab(ttk.Frame):
                 f"disarm failed: {self.app.describe_error(error)}" if error else "raster breakpoint disarmed"
             )
 
-        self.app.run_async(lambda: self.app.client.post_empty("/api/raster_bp?enable=0"), done)
+        self.app.run_async(lambda: self.app.client.put("/api/breakpoints", {"raster": None}), done)

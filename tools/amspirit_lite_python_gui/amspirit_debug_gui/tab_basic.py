@@ -209,14 +209,14 @@ class BasicTab(ttk.Frame):
     # -- step / run-to / breakpoints ---------------------------------------
 
     def _step(self, line: bool):
-        path = "/api/basic_step?mode=line" if line else "/api/basic_step"
+        body = {"action": "step", "target": "basic", "unit": "line" if line else "statement"}
 
         def done(_result, error):
             self._status_var.set(f"step failed: {self.app.describe_error(error)}" if error else "stepped")
             if not error:
                 self.app.invalidate()
 
-        self.app.run_async(lambda: self.app.client.post_empty(path), done)
+        self.app.run_async(lambda: self.app.client.post("/api/run", body), done)
 
     def _tl_back(self):
         def done(_result, error):
@@ -239,14 +239,18 @@ class BasicTab(ttk.Frame):
         self.app.run_async(lambda: self.app.client.post_empty(f"/api/basic_runto?line={line}"), done)
 
     def _apply_bp(self):
-        body = self._bp_var.get()
+        try:
+            lines = [int(t) for t in self._bp_var.get().split(",") if t.strip()]
+        except ValueError:
+            self._status_var.set("breakpoints failed: line numbers must be integers")
+            return
 
         def done(_result, error):
             self._status_var.set(
                 f"breakpoints failed: {self.app.describe_error(error)}" if error else "breakpoints applied"
             )
 
-        self.app.run_async(lambda: self.app.client.post_text("/api/basic_bp", body), done)
+        self.app.run_async(lambda: self.app.client.put("/api/breakpoints", {"basic": [{"line": n} for n in lines]}), done)
 
     def _clear_bp(self):
         self._bp_var.set("")
@@ -276,7 +280,7 @@ class BasicTab(ttk.Frame):
             self._editor.insert("1.0", result.body.decode("utf-8", errors="replace"))
             self._status_var.set("exported from CPC")
 
-        self.app.run_async(lambda: self.app.client.get_raw("/api/basic_export?verbose=1"), done)
+        self.app.run_async(lambda: self.app.client.get_raw("/api/basic_export?verbose=true"), done)
 
     def _save_bas(self):
         path = filedialog.asksaveasfilename(defaultextension=".bas", filetypes=[("BASIC files", "*.bas")])
