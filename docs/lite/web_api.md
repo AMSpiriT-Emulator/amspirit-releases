@@ -1,7 +1,7 @@
 # AMSpiriT-Lite — Embedded HTTP Debug Server
 
-> **Documented version: AMSpiriT Lite 1.16.2.** Use this version or a newer
-> one — ideally exactly 1.16.2, so the doc matches the binary. If your build
+> **Documented version: AMSpiriT Lite 1.17.0.** Use this version or a newer
+> one — ideally exactly 1.17.0, so the doc matches the binary. If your build
 > differs, treat the running instance as authoritative: query `GET /api/doc`
 > (and `GET /api/doc/<name>`) for the endpoints it actually serves.
 
@@ -1568,6 +1568,18 @@ banking configuration. Drives the memory-map bar in the CPU tab.
 
 ---
 
+### `DELETE /api/cartridge`
+
+Eject the cartridge: its banks leave `GET /api/rommap` and the machine hard-resets. The CPC model is left as is (a `.cpr` had switched it to 6128+: `POST /api/config` `cpc_model` to go back).
+
+```bash
+curl -X DELETE http://127.0.0.1:6128/api/cartridge
+```
+
+**Response**: `200 application/json` — `{"cmd_seq":N}`
+
+---
+
 ### `GET /api/rommap`
 
 Returns the ROM catalog (`rom_registry`): which firmware, extension
@@ -1624,6 +1636,7 @@ Returns the current CRT monitor preset, screen type and shader parameters.
 {
   "monitor": "CTM644",
   "screen_type": 0,
+  "monitor_cal": "auto",
   "presets": ["Off","CTM644","GT65","TV"],
   "crt": {
     "curvature": 0.005, "scanline": 0.30, "sharpness": 0.80,
@@ -1638,6 +1651,7 @@ Returns the current CRT monitor preset, screen type and shader parameters.
 |---|---|
 | `monitor` | Current monitor preset: `"Off"`, `"CTM644"`, `"GT65"` or `"TV"` |
 | `screen_type` | Screen type: 0 = colour, 1 = green, 2 = colour (ASIC), 3 = green (ASIC) |
+| `monitor_cal` | Monitor calibration: `"auto"`, `"ctm"` or `"cm14"` (see `POST /api/render`) |
 | `presets` | The accepted `monitor` values |
 | `crt` | CRT shader parameters (see `POST /api/render`) |
 
@@ -1651,10 +1665,19 @@ subset of the keys may be sent. `crt` is applied as a whole set when present.
 ```json
 { "monitor": "GT65" }
 { "screen_type": 1 }
+{ "monitor_cal": "cm14" }
 { "crt": { "curvature":0.005, "scanline":0.30, "sharpness":0.80,
            "mask_type":4, "mask_pitch":3.0, "mask":0.15, "halation":0.12,
            "diffusion":0.10, "convergence":0.0, "brightness":1.0, "persistence":0.0 } }
 ```
+
+`monitor_cal` picks the monitor the CPC is plugged into, which sets the
+horizontal framing of the visible-screen crop (`crop=true` screenshots, the
+"Visible screen only" view). `"auto"` (default) assumes the monitor matching the
+CRTC, so the frame is centred. `"ctm"` (CTM640/644, calibrated for CRTC 0/1/2)
+and `"cm14"` (CPC+ monitor, calibrated for CRTC 3/4) force one monitor: the
+other CRTC family then shows the frame shifted 16 px (CRTC 3/4 on a CTM: left;
+CRTC 0/1/2 on a CM14: right). The full frame is unaffected.
 
 Selecting a `monitor` preset loads that preset's default parameters. Ranges:
 `curvature` 0–0.03, `scanline`/`sharpness`/`mask`(≤0.25)/`halation`/`diffusion`/`persistence` 0–1,
@@ -2244,7 +2267,7 @@ disks or across requests to different drives.
 
 ### `POST /api/disk`
 
-Disk management: create a blank disk or save (download) the current disk image.
+Disk management: create a blank disk, eject the disk, or save (download) the current disk image.
 
 **Body**: `application/json`
 
@@ -2252,6 +2275,7 @@ Disk management: create a blank disk or save (download) the current disk image.
 |---|---|---|---|
 | `action` | string | `"create"` | Insert a blank formatted DSK into the given drive |
 | `action` | string | `"save"` | Export the current DSK image as a file download |
+| `action` | string | `"eject"` | Empty the drive; unsaved writes are flushed to the disk's file first |
 | `drive` | string | `A` | Target drive: `A` or `B` |
 
 ```bash
@@ -2266,7 +2290,7 @@ curl -X POST http://127.0.0.1:6128/api/disk \
      -d '{"action":"save","drive":"A"}' -o disk_A.dsk
 ```
 
-**Create response**: `200 application/json` — `{"cmd_seq":N}`  
+**Create / eject response**: `200 application/json` — `{"cmd_seq":N}`  
 **Save response**: `200 application/octet-stream` — attachment `disk_A.dsk` (or `disk_B.dsk`)  
 **Save error** (no disk or failed): `500 application/json` — `{"error":"no disk or save failed"}`
 
@@ -2448,6 +2472,7 @@ out. A **stale** `keymap.cfg` silently overrides the table — delete it to undo
 | GET | `/api/codemap` | Executed-instruction bitmap (code/data zones) |
 | DELETE | `/api/codemap` | Reset the executed-instruction bitmap + history |
 | GET | `/api/memmap` | ROM/RAM mapping per 16 KB region + RAM banking config |
+| DELETE | `/api/cartridge` | Eject the cartridge (banks leave the ROM catalog) and hard-reset |
 | GET | `/api/rommap` | ROM catalog: loaded firmware/extension/cartridge-bank ROMs and their sources |
 | GET | `/api/screenshot[?crop=N&live=N&full=N]` | Current frame as a PNG (+ beam/crop headers) |
 | GET | `/api/render` | Current CRT monitor preset, screen type, shader params |
