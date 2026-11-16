@@ -244,13 +244,29 @@ def history_config(size: int) -> dict:
 
 
 @mcp.tool()
-def z80_codemap(clear: bool = False) -> dict:
-    """Get (or, if clear=True, reset) the 64KB executed-instruction bitmap:
-    which addresses have been reached by the Z80 since the last reset. Useful
-    for telling code from data in a memory region."""
+def z80_codemap(clear: bool = False, view: str = "", bank: int = -1,
+                ram: bool = False, map: str = "") -> dict:
+    """Get (or, if clear=True, reset) the code map: where the Z80 started
+    instructions since the last reset, kept per RAM bank and per ROM. Useful
+    for telling code from data in a memory region.
+
+    No argument: the CPU view through the live mapping, {"hex": 8192 bytes}.
+    view="cpu"|"fw", bank=<16K bank> or map="FW,B01,B02,R00" (CPU view read
+    through that mapping) pick another view; ram=True adds the view's bytes,
+    read at the same instant as the marks. Those answers also carry "view" and
+    "map" (the 16K spaces shown)."""
     if clear:
         return _request("DELETE", "/api/codemap")
-    return _request("GET", "/api/codemap")
+    params = {}
+    if view:
+        params["view"] = view
+    if bank >= 0:
+        params["bank"] = bank
+    if ram:
+        params["ram"] = 1
+    if map:
+        params["map"] = map
+    return _request("GET", "/api/codemap", params=params or None)
 
 
 @mcp.tool()

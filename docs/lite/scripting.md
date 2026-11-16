@@ -177,6 +177,7 @@ its current format either way.
 reset()              -- hard reset (default)
 reset("soft")        -- soft reset
 reset("hard")
+quit()               -- quit the emulator (exit code 0) at the end of the tick; earlier screenshots are already written
 crtc_select(n)       -- change CRTC type (0–4) and reinitialize
 crtc_select("1A")    -- CRTC 1, revision A (same as crtc_select(1))
 crtc_select("1B")    -- CRTC 1, revision B
@@ -198,6 +199,10 @@ emulated and raise an error.
 ```lua
 disk_insert([drive,] path)   -- insert a DSK/HFE/IPF into drive "A" (default) or "B"
 disk_eject([drive])          -- empty drive "A" (default) or "B", its writes saved first
+disk_autorun([drive])        -- launch the inserted disk like lite's autorun: types RUN"file (best-scored
+                             -- catalog entry, same engine as GET /api/disk) or |CPM (CP/M disk, unreadable
+                             -- catalog, or no launchable file); waits for the typing like key_output.
+                             -- Empty drive: types nothing, returns false
 disk_dir(path)               -- search prefix for disk_insert
 tape_insert(path)            -- insert a CDT/WAV cassette
 tape_dir(path)
@@ -598,7 +603,13 @@ local crtc = cpc.getCRTC()
 -- crtc.selected_reg   : register selected by the last &BCxx write
 -- plus every signal the loaded core publishes (counters, HSYNC/VSYNC…), under its /api/crtc key
 -- crtc.ticks          : the tick counter, as in cpc.getZ80()
+-- crtc.view           : "z80" = as the Z80 sees them (machine stopped at an instruction
+--                       start: breakpoint, step, pause), "live" = direct read (running)
 ```
+
+Stopped at an instruction start, the live CRTC lags the Z80 by 2 ticks;
+`getCRTC()` then serves the corrected values the web debugger shows (the
+*Lecture CRTC à l'arrêt*, `GLOSSARY.md`), and `view` says which you got.
 
 `regs`, `ink_idx` and `ink_rgb` are keyed from 0, so `ipairs()` and `#` skip
 their first entry — iterate them with `for i = 0, 13 do … end`.

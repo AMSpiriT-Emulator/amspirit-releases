@@ -1,7 +1,7 @@
 # AMSpiriT-Lite — Embedded HTTP Debug Server
 
-> **Documented version: AMSpiriT Lite 1.17.0.** Use this version or a newer
-> one — ideally exactly 1.17.0, so the doc matches the binary. If your build
+> **Documented version: AMSpiriT Lite 1.17.8.** Use this version or a newer
+> one — ideally exactly 1.17.8, so the doc matches the binary. If your build
 > differs, treat the running instance as authoritative: query `GET /api/doc`
 > (and `GET /api/doc/<name>`) for the endpoints it actually serves.
 
@@ -67,12 +67,13 @@ as long as the server is running.
 | `frames` | `std::atomic<uint64_t>` | `0` | Completed emulated video frames; the frontend must bump this once per frame — source of `emu.frames` |
 | `autotype_remaining` | `std::atomic<int>` | `0` | Characters/VK presses left to deliver, updated by the frontend each frame — source of `emu.autotyping`/`emu.autotype_remaining` |
 | `rw_active` / `rw_steps_back` / `rw_steps_fwd` / `rw_rewound` / `rw_step_kind` | `bool` / `int` / `int` / `bool` / `std::string` | `false` / `0` / `0` / `false` / `""` | Rewind state, written by the frontend each frame — source of the `rw_*` fields in `emu` (see `GET /api/state`) and consumed by `POST /api/rewind/back` |
-| `rw_enabled` / `rw_interval` / `rw_slots` | `bool` / `int` / `int` | `false` / `10` / `100` | Rewind configuration, written by the frontend each frame — source of the `rw_*` fields of `GET /api/config` |
-| `machine_sounds_unlocked` / `machine_sounds_live` | `bool` / `MachineSoundsChange` | `false` / — | Experimental features unlocked, and the machine sounds switches/volumes, written by the frontend each frame — gate and source of the `machine_sounds_*` fields of `/api/config` |
+| `rw_enabled` / `rw_interval` / `rw_slots` / `rw_mem_cap_mb` / `rw_mem_auto` | `bool` / `int` / `int` / `int` / `bool` | `false` / `10` / `100` / `128` / `false` | Rewind configuration, written by the frontend each frame — source of the `rw_*` fields of `GET /api/config` |
+| `machine_sounds_live` | `MachineSoundsChange` | — | Machine sounds switches/volumes, written by the frontend each frame — source of the `machine_sounds_*` fields of `/api/config` |
 | `render_monitor` / `render_crt` | `int` / `CrtParams` | `0` / — | Current CRT monitor preset and shader parameters, written by the frontend each frame — source of `GET /api/render` |
 | `debug_api` | `bool` | `false` | Set at startup: log every incoming request, response status, and SSE event |
 | `audio_devices` / `audio_current_device` | `std::vector<std::string>` / `std::string` | `{}` / `""` | Audio device list and current selection, populated by the frontend at startup — source of `GET /api/audio/devices` |
-| `audio_volume_pct` | `int` | `100` | Live output volume, snapshotted by the frontend each frame — source of `volume` in `GET /api/config` |
+| `audio_volume_pct` | `int` | `100` | Live master volume, snapshotted by the frontend each frame — source of `volume` in `GET /api/config` |
+| `cpc_volume_pct` | `int` | `100` | Live CPC mixer gain, snapshotted by the frontend each frame — source of `cpc_volume` in `GET /api/config` |
 
 #### `WebPending`
 
@@ -103,7 +104,7 @@ Consumed by `web_server_poll`.
 | `do_disk_create` | `bool` | Insert a blank disk into `disk_drive` |
 | `disk_drive` | `uint8_t` | Drive for disk_create (0=A, 1=B) |
 | `disk_create_cmd` | `uint64_t` | `cmd_seq` of that request, for `emu.failed_cmds` |
-| `media_loads` | `std::vector<WebMediaLoad>` | `POST /api/media` uploads (`cmd`, `data`, `name`, `drive`, `crtc_keep`), applied in arrival order |
+| `media_loads` | `std::vector<WebMediaLoad>` | `POST /api/media` uploads (`cmd`, `data`, `name`, `drive`, `crtc_keep`, `pause`, `cro_group`), applied in arrival order |
 | `do_remap` | `bool` | Apply a live keymap binding change |
 | `remap_host_cp` | `uint32_t` | Host character to remap |
 | `remap_types_cp` | `uint32_t` | CPC character it should now produce |
@@ -123,7 +124,7 @@ Consumed by `web_server_poll`.
 | `do_run_to` | `bool` | Resume until a one-shot target then pause |
 | `run_to_line` | `uint16_t` | Run-to target BASIC line (`0xFFFF` = use `run_to_addr`) |
 | `run_to_addr` | `uint16_t` | Run-to target statement address from `0xAE1B` |
-| `clear_codemap` | `bool` | Reset the executed-instruction bitmap and history |
+| `clear_codemap` | `bool` | Reset the code map (every RAM bank and ROM) and the history |
 | `set_monitor` | `bool` | Change CRT monitor preset |
 | `monitor_val` | `int` | New `MonitorPreset` value |
 | `set_crt` | `bool` | Apply new CRT shader parameters |
@@ -138,8 +139,10 @@ Consumed by `web_server_poll`.
 | `new_audio_device` | `std::string` | Device name; empty = system default |
 | `do_set_volume` | `bool` | Set the output volume (see `volume` in `POST /api/config`) |
 | `new_volume_pct` | `int` | New volume, 0–100 percent |
+| `do_set_cpc_volume` | `bool` | Set the CPC mixer gain (see `cpc_volume` in `POST /api/config`) |
+| `new_cpc_volume_pct` | `int` | New CPC gain, 0–100 percent |
 | `set_rewind` | `bool` | Reconfigure the rewind buffer (see `rw_*` in `POST /api/config`) |
-| `rw_enabled` / `rw_interval` / `rw_slots` | `int` | New rewind settings; `-1` = unchanged |
+| `rw_enabled` / `rw_interval` / `rw_slots` / `rw_mem_cap_mb` / `rw_mem_auto` | `int` | New rewind settings; `-1` = unchanged |
 | `history_size` | `int` | New Z80 history depth; `-1` = unchanged |
 | `machine_sounds` | `MachineSoundsChange` | New machine sounds switches/volumes; each field `-1` = unchanged |
 
@@ -515,6 +518,12 @@ Otherwise, the embedded UI in the binary is used.
 
 **Response**: `200 text/html`
 
+The scripts and stylesheets the page loads beside itself (`disasm.js`) are
+served from the same directory as `html_path`: `GET /<name>` with a bare file
+name ending in `.js` or `.css`. A name with a directory, `..`, a `%` escape or
+another extension is never looked up on disk; it gets the API's `404`, like a
+missing file.
+
 ---
 
 ### `GET /api/state`
@@ -546,8 +555,9 @@ Direct read without lock (display-only data, accepts slight inconsistency).
   },
   "crtc": {
     "regs": [63,40,46,142,38,0,25,30,0,7,0,0,48,0],
-    "selected_reg": 0
+    "selected_reg": 0,
     // + whatever signals the loaded core publishes (see below)
+    "view": "live"
   },
   "psg": {
     "period_a": 0, "vol_a": 0,
@@ -580,6 +590,17 @@ Direct read without lock (display-only data, accepts slight inconsistency).
     "rw_steps_fwd": 0,
     "rw_step_kind": "frame",
     "rw_step_frames": 10,
+    "rw_captures": 0,
+    "rw_bytes_avg": 0,
+    "rw_bytes_max": 0,
+    "rw_bytes_total": 0,
+    "rw_capture_us_avg": 0,
+    "rw_capture_us_max": 0,
+    "rw_capture_hist": [0, 0, 0, 0, 0, 0],
+    "rw_restores": 0,
+    "rw_restore_us_avg": 0,
+    "rw_restore_us_max": 0,
+    "rw_restore_hist": [0, 0, 0, 0, 0, 0],
     "ram_apply_seq": 0,
     "applied_cmd_seq": 0
   }
@@ -609,6 +630,7 @@ Direct read without lock (display-only data, accepts slight inconsistency).
 | `crtc` | `regs` | Array of 14 hardware register values R0–R13 |
 | `crtc` | `selected_reg` | Currently selected register (last write to `&BC00`) |
 | `crtc` | *(more)* | Extra signals depend on the loaded core's published capabilities — never a fixed list, see `GET /api/crtc` below |
+| `crtc` | `view` | `"z80"` or `"live"`: which CRTC values these are, see `GET /api/crtc` below |
 | `fdc` | `msr` | Main Status Register of the PD765 |
 | `fdc` | `sr0/sr1/sr2` | Status Registers 0/1/2 |
 | `fdc` | `motor` | Drive motor state |
@@ -634,6 +656,14 @@ Direct read without lock (display-only data, accepts slight inconsistency).
 | `emu` | `rw_steps_back` / `rw_steps_fwd` | Steps available to navigate the rewind backward/forward (context-filtered to `rw_step_kind`) |
 | `emu` | `rw_step_kind` | Current step-context kind: `"frame"`, `"basic"`, or `"z80"` |
 | `emu` | `rw_step_frames` | Frames one step is worth: `rw_interval` for `"frame"` steps, `0` for `"z80"`/`"basic"` |
+| `emu` | `rw_captures` | Rewind points captured since the rewind was last (re)configured |
+| `emu` | `rw_bytes_avg` / `rw_bytes_max` | Mean / largest size of a captured point, in bytes |
+| `emu` | `rw_bytes_total` | Memory held by the rewind history right now, in bytes |
+| `emu` | `rw_capture_us_avg` / `rw_capture_us_max` | Mean / worst capture time of a point, in microseconds |
+| `emu` | `rw_capture_hist` | Captures per duration band: <0.25 ms, <0.5 ms, <1 ms, <2 ms, <5 ms, ≥5 ms |
+| `emu` | `rw_restores` | States reloaded (points and returns to live) |
+| `emu` | `rw_restore_us_avg` / `rw_restore_us_max` | Mean / worst restore time, in microseconds |
+| `emu` | `rw_restore_hist` | Restores per duration band, same bands as `rw_capture_hist` |
 | `emu` | `applied_cmd_seq` | Highest `cmd_seq` applied, the emulation having run after it (see *Commands: accepted now, applied later*) |
 | `emu` | `failed_cmds` | Commands accepted but refused when applied, `[{"cmd_seq","error"}]`, the 16 most recent, oldest first (see *Did it work?*) |
 | `emu` | `ram_apply_seq` | **Deprecated**: same value as `applied_cmd_seq`, use that |
@@ -642,16 +672,30 @@ Direct read without lock (display-only data, accepts slight inconsistency).
 
 ### `GET /api/crtc`
 
-Instantaneous snapshot of CRTC registers and selected counters.  
-Direct read without lock (display-only data, accepts slight inconsistency).
+CRTC registers and selected counters: the **Lecture CRTC à l'arrêt**
+(`GLOSSARY.md`).
+
+- **Stopped at an instruction start** (Z80/BASIC/raster breakpoint, run-to,
+  single step, pause at a frame end): the values **as the Z80 sees them**,
+  `view = "z80"`. There the live CRTC lags 2 ticks behind the Z80; the loop
+  computes the corrected read once per stop, on the emulation thread, and
+  recomputes it after any command applied while stopped. The screen and the
+  machine state are the same before and after.
+- **Running, or stopped mid-instruction** (runaway-cap stop): the direct read,
+  `view = "live"`.
+
+Registers and published signals always come from the same view. In a public
+core build the published signals are absent and only the registers benefit
+from the Z80 view.
 
 **Response**: `200 application/json`
 
 ```json
 {
   "regs": [63,40,46,142,38,0,25,30,0,7,0,0,48,0],
-  "selected_reg": 0
+  "selected_reg": 0,
   // + whatever signals the loaded core publishes (see below)
+  "view": "z80"
 }
 ```
 
@@ -670,6 +714,7 @@ Direct read without lock (display-only data, accepts slight inconsistency).
 | `regs[10–11]` R10–R11 | Cursor Start / End Raster |
 | `regs[12–13]` R12–R13 | Screen Start Address High / Low |
 | `selected_reg` | Register currently selected (last `&BC00` write) |
+| `view` | `"z80"` = as the Z80 sees them (stop at an instruction start); `"live"` = direct read |
 
 > **Note:** Beyond `regs[]`/`selected_reg`, the response may carry additional
 > internal counters/signals — this repo hardcodes none of their names or ids.
@@ -699,9 +744,12 @@ Returns the current configuration of `CORE_PARAM_IN`.
   "rom_lang": "EN",
   "mapping_keyboard": false,
   "volume": 100,
+  "cpc_volume": 100,
   "rw_enabled": false,
   "rw_interval": 10,
   "rw_slots": 100,
+  "rw_mem_cap_mb": 128,
+  "rw_mem_auto": false,
   "history_size": 20,
   "last_reinit": "ok"
 }
@@ -712,18 +760,26 @@ Returns the current configuration of `CORE_PARAM_IN`.
 **total** RAM in Ko — the 64 Ko of central RAM included — and is the unit
 `POST /api/config` accepts, so the two round-trip.
 
-Only 128, 192, 320 and 576 are ever reported. The core always provides one
-banked 64 Ko bank on every model, so 128 Ko is the floor and no smaller machine
-exists; and it delivers eight banks for every `CORE_EXTENDED_RAM_*` value at or
-above 512 Ko, so larger indexes report 576.
+Only 64, 128, 192, 320 and 576 are ever reported. `extended_ram` 0 is the
+model's built-in RAM: 64 Ko on a 464 / 664 / 464+ / GX4000, 128 Ko on a
+6128 / 6128+, so a 6128 never reports 64. A GX4000 takes no memory expansion:
+it always reports 64. The core delivers eight banks for
+every `CORE_EXTENDED_RAM_*` value at or above 512 Ko, so larger indexes report
+576.
 
 `volume` is the live output volume (0–100). The frontend snapshots it every
 frame, so it reflects changes made via hotkey (F7/F8), the mouse wheel, or this
 endpoint. (SDL frontend; the Qt frontend has its own native volume widget.)
 
-`rw_enabled` / `rw_interval` / `rw_slots` are the rewind configuration — whether
-the snapshot buffer is on, frames between snapshots, and buffer capacity — as
-set by the CLI, the config file, the Qt/imgui Rewind menu or `POST /api/config`.
+`cpc_volume` is the CPC mixer gain (0–100, default 100): the machine's own sound
+(PSG, beeper), applied before the machine sounds are added and before the master
+`volume`. Neither one changes what `/api/audio` records. Plugins play through their
+own audio layer, outside both: their volume is the `p_volume` parameter of
+`GET/POST /api/plugins`.
+
+`rw_enabled` / `rw_interval` / `rw_slots` / `rw_mem_cap_mb` / `rw_mem_auto` are the rewind
+configuration — whether the snapshot buffer is on, frames between snapshots,
+buffer capacity, the memory ceiling of the history in MiB, and whether that ceiling is automatic — as set by the CLI, the config file, the Qt/imgui Rewind menu or `POST /api/config`.
 `history_size` is the depth of the Z80 instruction history (`GET /api/history`).
 
 `last_reinit` says whether the last `cpc_model` / `crtc_type` / `rom_lang` change
@@ -735,13 +791,11 @@ for that Plus/GX4000 in this ROM language); `"failed"` (no ROM at all — the
 machine has no firmware; switch to a model whose ROMs exist); `"none"` before
 any change. The emulator keeps running in every case.
 
-**Experimental — machine sounds.** Only once the experimental features are unlocked
-(unlock sequence in the About window or on the splash), the object also carries
+**Machine sounds.** The object also carries
 `machine_sounds_drive`, `machine_sounds_tape`, `machine_sounds_tape_signal`, `machine_sounds_keyboard`
-(booleans) and `machine_sounds_drive_volume`, `machine_sounds_tape_volume`,
-`machine_sounds_keyboard_volume` (0–100): the mechanical sounds of the drive, tape
-and keyboard, mixed on top of the CPC audio. While locked these fields are
-absent.
+(booleans, derived: on = volume > 0) and `machine_sounds_drive_volume`, `machine_sounds_tape_volume`,
+`machine_sounds_keyboard_volume`, `machine_sounds_keyboard_user_volume` (0–100, 0 = off): the mechanical sounds of the drive, tape
+and keyboard, mixed on top of the CPC audio.
 
 ---
 
@@ -765,28 +819,35 @@ and applied by the main thread (including reset).
 
 | Field | Type | Effect |
 |---|---|---|
-| `cpc_model` | string | Change the CPC model: `"464"`, `"664"`, `"6128"`, `"6128+"`, `"464+"` or `"GX4000"` (triggers an implicit reset on the application side). Without `crtc_type`, a Plus takes CRTC 3 and a classic keeps its CRTC unless it was 3 (then 1) |
+| `cpc_model` | string | Change the CPC model: `"464"`, `"664"`, `"6128"`, `"6128+"`, `"464+"` or `"GX4000"` (triggers an implicit reset on the application side). Without `crtc_type`, a Plus takes CRTC 3 and a classic keeps its CRTC unless it was 3 (then 1). A new model keeps an expansion above 128 Ko (192, 320, 576), but gets its built-in RAM (64 Ko, or 128 Ko on a 6128 / 6128+) for a 64 or 128 Ko machine, unless `ram_kb` comes in the same request |
 | `crtc_type` | integer | Change the CRTC type (same), `0`–`4`. A Plus/GX4000 runs only `3`, a classic CPC anything but `3`; a pair the emulator cannot build — against the model in the request, else the one queued or running — is rejected (`400`) rather than rewritten |
-| `ram_kb` | integer | **Total** RAM in Ko (central 64 Ko included): `128`, `192`, `320` or `576`. Any other value — including the banked sizes like `512` — is rejected (`400`, `field: ram_kb`) rather than clamped. Resizing the RAM forces a **hard reset** |
+| `ram_kb` | integer | **Total** RAM in Ko (central 64 Ko included): `64`, `128`, `192`, `320` or `576`. Any other value — including the banked sizes like `512` — is rejected (`400`, `field: ram_kb`) rather than clamped. `64` is rejected too on a 6128 / 6128+, which has 128 Ko built in, and anything but `64` on a GX4000, which takes no memory expansion (both against the model in the request, else the one queued or running). Resizing the RAM forces a **hard reset** |
 | `rom_lang` | string | ROM language: `"FR"`, `"EN"`, `"SP"`, `"DA"` |
 | `mapping_keyboard` | boolean | Enable/disable keyboard mapping mode |
-| `volume` | integer | Set output volume 0–100 (SDL frontend; Qt uses its native widget) |
+| `volume` | integer | Set master volume 0–100: the CPC and the machine sounds, not the plugins (SDL frontend; Qt uses its native widget) |
+| `cpc_volume` | integer | Set the CPC mixer gain 0–100: the machine's own sound (PSG, beeper) only, below the master. Plugin volumes go through `POST /api/plugins` (`set_param`, parameter `p_volume`) |
 | `audio_device` | string | Switch the audio output device (`""` = system default). Device names come from `GET /api/audio/devices`. SDL frontend only |
 | `rw_enabled` | boolean | Enable/disable the rewind buffer |
 | `rw_interval` | integer | Frames between rewind snapshots, 1–500 (50 = 1 s). `1` = one snapshot per frame, the setting for debugging |
-| `rw_slots` | integer | Rewind buffer capacity, 10–2000 snapshots. Each snapshot takes ~1.6 MB of RAM |
+| `rw_slots` | integer | Rewind buffer capacity, 10–2000 snapshots. A point is the machine state (chips + RAM) plus the image of the visible screen zone, run-length encoded: ~0.15 MB on a 128 KB CPC, ~0.6 MB at 576 KB |
+| `rw_mem_cap_mb` | integer | Memory ceiling of the rewind history, 8–4096 MiB (default 128, which holds the default 100 points even at 576 KB). Beyond it the oldest points are dropped, so fewer than `rw_slots` points may be reachable; the rewind window really reached is points × `rw_interval` ÷ 50 seconds of emulation. Persisted like the other rewind settings. In auto mode (`rw_mem_auto`) it reports the peak memory the history reached |
+| `rw_mem_auto` | boolean | Automatic memory ceiling: nothing is dropped below 4096 MiB and `rw_mem_cap_mb` follows the peak reached; switching it off makes that peak the ceiling. Persisted |
 | `history_size` | integer | Depth of the Z80 instruction history, 1–100000 (default 20). Resizing empties it and clears the rewind buffer. Not persisted |
-| `machine_sounds_drive` / `machine_sounds_tape` / `machine_sounds_keyboard` | boolean | **Experimental.** Drive, tape and keyboard sounds on/off (keyboard = keys typed by the emulator: autotype, scripts) |
+| `machine_sounds_drive` / `machine_sounds_tape` / `machine_sounds_keyboard` | boolean | **Experimental.** Drive, tape and keyboard sounds on/off (keyboard = keys typed by the emulator: autotype, scripts). Alias of the volume: `false` sets it to 0, `true` restores the default only if it is 0; a volume in the same body wins |
 | `machine_sounds_tape_signal` | boolean | **Experimental.** Also hear the tape data signal |
-| `machine_sounds_drive_volume` / `machine_sounds_tape_volume` / `machine_sounds_keyboard_volume` | integer | **Experimental.** Volume of each source, 0–100 |
+| `machine_sounds_drive_volume` / `machine_sounds_tape_volume` / `machine_sounds_keyboard_volume` | integer | **Experimental.** Volume of each source, 0–100; 0 = off. For the keyboard: keys typed by the emulator (autotype, scripts, API) |
+| `machine_sounds_keyboard_user_volume` | integer | **Experimental.** Volume of the sounds of keys typed by the user, 0–100; 0 = off (default). The keyboard boolean is on when either keyboard volume is non-zero; `false` zeroes both, `true` restores only `machine_sounds_keyboard_volume` |
 
 Any `rw_*` change reconfigures the rewind buffer, which **clears** its history
 (same as the Qt/imgui Rewind settings dialog). Out-of-range values are rejected
 (`400`, `field: rw_*`), not clamped.
 
-The `machine_sounds_*` fields are refused with `403` while the experimental features
-are locked; the whole request is then rejected, other fields included. Once
-unlocked they are persisted like the settings menus.
+The rewind history is also emptied, identically on every frontend, when a disk
+is inserted or ejected (any drive) and when the machine is rebuilt: CPC model,
+CRTC or ROM-language change, RAM resize. The configuration is kept; recording
+restarts from the next point, so there is no stepping back before the change.
+
+The `machine_sounds_*` fields are persisted like the settings menus.
 
 **Success response**: `200 application/json` — `{"cmd_seq":N}`  
 **Method error response**: `400 text/plain` — `Bad Request`
@@ -1160,6 +1221,8 @@ until `down:false`, until the `frames` budget runs out, or until a hard or soft 
 Several keys can be held at once, one call each. Releasing a key that is not held
 succeeds and does nothing. A hold does not wait behind `/api/keytype` text.
 
+The `frames` budget belongs to the hold, not to the key: releasing the key cancels it, and holding the key again replaces it, so an earlier budget never cuts a later hold short.
+
 A key stays down as long as *any* source holds it: if the host keyboard also holds
 the same key, releasing the hold does not let go of it, and the reverse.
 
@@ -1200,7 +1263,9 @@ would, until it is released.
 
 Each call states the **whole** joystick wanted, not a change: a direction left out is
 released. The state is merged with a real gamepad by OR, so neither source cancels
-the other. A hard or soft reset releases it.
+the other. A hard or soft reset releases it. The `frames` budget belongs to the state
+currently held: `release` cancels it and a new call replaces it, so an earlier budget
+never cuts a later state short.
 
 When no joystick is connected, the first call connects a digital one, as plugging a
 gamepad would. A joystick already chosen (analogue, mapped) is left as it is.
@@ -1480,16 +1545,50 @@ history (and clears the rewind buffer). The current depth is `history_size` in
 
 ### `GET /api/codemap` · `DELETE /api/codemap`
 
-`GET` returns a 65536-bit bitmap (8192 bytes, hex) marking every address at
-which an instruction has **started executing** since the last reset. Bit
-`addr` is set when an instruction begins at that address. Used to colour
-"code" vs "data" zones in the disassembler.
+The **carte de code**: every byte at which an instruction has **started
+executing** since the last reset, kept per physical memory (each RAM bank, the
+firmware ROM, each upper ROM). A mark made while a ROM was paged stays on that
+ROM: it never shows on the RAM paged at the same CPU address later, and a bank
+switched in at `#4000` does not inherit the marks of the previous one. Used to
+colour "code" vs "data" zones in the disassembler.
+
+Without parameters, `GET` returns the CPU view through the live mapping: a
+65536-bit bitmap (8192 bytes, hex), bit `addr` set when an instruction began at
+the byte now visible at `addr`. Byte `i` covers addresses `8i..8i+7`, bit 0 =
+`8i`.
 
 ```json
 {"hex":"0000....ffff"}
 ```
 
-`DELETE` clears the bitmap (and the instruction history).
+**Query parameters** (all optional; any of them switches to the full answer
+below):
+
+| Parameter | Effect |
+|---|---|
+| `view` | `cpu` (default) = the Z80's mapping; `fw` = firmware ROM + selected upper ROM, 32K |
+| `bank` | 16K bank (`Bnn:` numbering): this bank and the next ones up to the end of its 64K block, like `GET /api/ram`. A bank the current RAM size does not have → `400` field `bank` |
+| `ram` | `1`/`true` adds the bytes of the view |
+| `map` | CPU view only: read it through this mapping CPU instead of the live one — four slot names `FW` (firmware ROM), `Rnn` (upper ROM) or `Bnn` (bank), hex, comma-separated: `FW,B01,B02,R00`. Malformed, naming a bank not installed, or combined with `bank`/`view=fw` → `400` field `map` |
+
+```json
+{"view":"cpu","map":"FW,B01,B02,R00","hex":"0000....","ram":"3e01...."}
+```
+
+| Field | Meaning |
+|---|---|
+| `view` | `cpu`, `fw` or `bank` |
+| `map` | The 16K spaces shown, in address order (`FW,R07` for `view=fw`, `B04,B05,B06,B07` for `bank=4`) |
+| `hex` | Their marks, 2048 bytes per space |
+| `ram` | Their bytes (only with `ram`). An upper ROM other than the selected one reads as zeros until it has run code once |
+
+`hex`, `ram` and `map` are read together between two frames (the emulation loop
+holds a lock while a frame runs), so they always describe the same instant. A
+debugger that keeps `map` fixed while the machine runs sees a listing that does
+not jump each time the firmware pages a ROM in or out.
+
+`DELETE` clears the marks of every memory (RAM banks and ROMs) and the
+instruction history.
 
 **Response**: `200 application/json` — `{"cmd_seq":N}` for `DELETE`.
 
@@ -1594,7 +1693,8 @@ snapshot of what's paged in right now.
 {
   "fw": {"loaded": true, "os_source": "os_6128.rom", "basic_source": "basic_6128.rom"},
   "ext_rom": [{"number": 7, "loaded": true, "source": "amsdos.rom"}],
-  "cartridge_bank": [{"number": 0, "loaded": true, "source": "game.cpr"}]
+  "cartridge_bank": [{"number": 0, "loaded": true, "source": "game.cpr"}],
+  "cro": null
 }
 ```
 
@@ -1607,6 +1707,10 @@ snapshot of what's paged in right now.
 | `ext_rom[].source` | Source file (a `.rom` for a single extension ROM, or the `.cro` container it came from) |
 | `cartridge_bank[].number` | CPC+ cartridge bank number (0-31) actually populated by the loaded CPR or CRO |
 | `cartridge_bank[].source` | `.cpr` or `.cro` file it was loaded from |
+| `cro` | The CRO media in the machine, or `null` when the media is not a CRO. A system CRO (`CPC_*.cro`, `GX4000.cro`) never appears here |
+| `cro.source` | The CRO file, or the upload's `name` |
+| `cro.group` | The loaded group, `{"gnum": n, "label": "…"}`: only its ROMs are in the lists above |
+| `cro.groups[]` | Every group of the file, in file order: `gnum`, `label`, `rom_count`, `bankable` (same objects as the `POST /api/media` refusal). Load another with `POST /api/media` `cro_group` |
 
 `ext_rom` and `cartridge_bank` are sparse lists: only currently-loaded
 numbers appear. Reloading the same number overwrites its entry. Loading a
@@ -1617,8 +1721,8 @@ rather than claiming a ROM the core has just erased is still loaded. A
 
 A CRO with cartridge banks replaces every previous bank; on a Plus it also
 drops the extension ROMs it does not redefine, and `fw` when it provides
-bank 0. A CRO without banks only adds entries. Only group `GNUM=0` of a CRO
-is loaded, so only its ROMs appear.
+bank 0. A CRO without banks only adds entries. Only the loaded group of a
+CRO is in the machine, so only its ROMs appear.
 
 ---
 
@@ -2126,6 +2230,8 @@ Steps the rewind back. Only meaningful while a rewind is active (`emu.rw_active`
 | `n` | `1` | Snapshots to go back (steps past the oldest are ignored) |
 | `mode` | `drop` | `navigate`: only navigate, like the native back key, so `POST /api/rewind/forward` can return to where you were |
 
+A restored point rewrites the machine state and the screen image without running a frame, so the displayed picture is the point's own. The emulated tick counter (`emu.ticks`, and the `cycle` argument of plugin callbacks) can go backwards after a restore.
+
 With `mode=drop` the step is destructive: the snapshot becomes the live state and the future beyond it is dropped (`emu.rw_steps_fwd` stays 0). One step is `emu.rw_step_frames` frames when `emu.rw_step_kind` is `"frame"`, otherwise one Z80 instruction or BASIC statement.
 
 ```bash
@@ -2143,13 +2249,13 @@ size the buffer for the window you need to analyse:
 
 ```bash
 curl -X POST http://127.0.0.1:6128/api/config \
-     -d '{"rw_enabled":true,"rw_interval":1,"rw_slots":300}'   # ~6 s of history, ~500 MB RAM
+     -d '{"rw_enabled":true,"rw_interval":1,"rw_slots":300}'   # 300 points x 1 frame = 6 s of emulation; ~50 MB at 128 KB
 ```
 
 Let the program run up to (or past) the moment of interest, pause
 (`POST /api/run {"action":"pause"}`), then call `POST /api/rewind/back` repeatedly, inspecting the
 machine at each step (`GET /api/state`, `GET /api/ram`, `GET /api/history`,
-screenshots). Keep `rw_slots` moderate: every snapshot costs ~1.6 MB.
+screenshots). Mind the memory: a point weighs ~0.15 MB (128 KB CPC) to ~0.6 MB (576 KB), and `rw_mem_cap_mb` (default 128) drops the oldest points beyond it — raise it for a long window.
 
 **Response**: `200 application/json` — `{"cmd_seq":N}`
 
@@ -2298,7 +2404,7 @@ curl -X POST http://127.0.0.1:6128/api/disk \
 
 ## Media Loading
 
-### `POST /api/media?name=<filename>&drive=<A|B>&crtc=<keep|sna>`
+### `POST /api/media?name=<filename>&drive=<A|B>&crtc=<keep|sna>&cro_group=<n>`
 
 Loads a media file into the emulator from the raw request body — the SNA/DSK/
 HFE/IPF/CDT/CPR/CRO/BIN counterpart of drag-and-drop or the frontend's `Ctrl+O`
@@ -2316,7 +2422,25 @@ by extension (see below).
 | `name` | string (URL-encoded) | — | Filename, e.g. `game.dsk`. Required for `.bin`/`.amsdos`; used to label the loaded media otherwise. |
 | `drive` | `A` or `B` | `A` | Target floppy drive for DSK/HFE/IPF images |
 | `crtc` | `keep` or `sna` | `sna` | SNA only. A v3 snapshot names its CRTC type (byte `0xA4`) and loading it switches the machine to it. `keep` puts back the CRTC emulated before the load — so `POST /api/config {"crtc_type":N}` then `?crtc=keep` runs the snapshot on CRTC N without a hard reset. Only within the same side of the Plus boundary: CRTC 3 (Plus ASIC) and 0/1/2/4 (classic) do not mix; across it the snapshot's CRTC is used and a warning is logged. Read the outcome in `emu.crtc_type` once `emu.applied_cmd_seq` reaches the `cmd_seq`. |
+| `cro_group` | integer | — | CRO only (ignored for other formats): `GNUM` of the group to load. Required when the CRO holds several groups; a single-group CRO needs none. Checked at once against the file, see below |
 | `pause` | boolean | `false` | `true` pauses right after a successful load, before its first instruction runs, so breakpoints can be armed on start-up code that runs once. Resume with `POST /api/run {"action":"resume"}`: the instruction at the entry PC then runs even under a breakpoint, so set breakpoints on a later address. Not applied when the load fails |
+
+A CRO holding several groups loads only one, and there is no default group.
+Sent without `cro_group`, it is refused with `400` at once; a `cro_group` the
+file lacks is refused the same way. Both bodies list the file's groups, so the
+client can retry; `reason` tells the two apart:
+
+```json
+{"error": "CRO with 3 groups: name the one to load with the cro_group query parameter",
+ "field": "cro_group", "reason": "cro_group_required",
+ "groups": [{"gnum": 0, "label": "Cartouche Basic Amstrad_FR.cpr", "rom_count": 4, "bankable": true},
+            {"gnum": 1, "label": "Burnin Rubber & Locomotive Basic_FR.cpr", "rom_count": 8, "bankable": true},
+            {"gnum": 2, "label": "AMSDOS seule (classique)", "rom_count": 1, "bankable": false}]}
+```
+
+`reason` is `cro_group_unknown` for a `cro_group` the file lacks. `bankable`
+says the group has cartridge banks: loading it switches a classic model to a
+6128+. `GET /api/rommap` `cro` shows the loaded group.
 
 A `.cpr` carries no CRTC type: loading one puts a classic machine on a 6128 Plus and a Plus or GX4000 on CRTC 3, whatever a previous SNA had imposed.
 
@@ -2345,7 +2469,7 @@ Supported formats and how each is detected:
 | `.ipf` | content (`CAPS` magic) | Inserted into `drive` |
 | `.cdt` tape | content (`ZXTape!` magic) | Inserted in the tape deck |
 | `.cpr` cartridge | content (`RIFF...AMS` magic) | Loaded as a standard cartridge; a classic model switches to a 6128+ first. Hard reset afterwards. A file the core rejects is not loaded (listed in `emu.failed_cmds`) but the model switch stays: `POST /api/config` `cpc_model` to go back |
-| `.cro` ROM container | content (`RIFF...CRO ` magic) | Validated as a whole first: an invalid file loads nothing (listed in `emu.failed_cmds`, the log names the error). A CRO with cartridge banks replaces the cartridge and switches a classic model to a 6128+; one without banks adds its ROMs. Hard reset afterwards |
+| `.cro` ROM container | content (`RIFF...CRO ` magic) | Validated as a whole first: an invalid file loads nothing (listed in `emu.failed_cmds`, the log names the error). One group is loaded (`cro_group`, see above). A group with cartridge banks replaces the cartridge and switches a classic model to a 6128+; one without banks adds its ROMs. The current CRO sent again (same `name`, e.g. another `cro_group`) first rebuilds the machine on the model and system ROMs it was first loaded on, so nothing of the previous group stays. Hard reset afterwards |
 | `.bin`/`.amsdos` | **filename extension**, not content | AMSDOS-header binaries load directly; a headerless raw binary needs an explicit load address via `name=game@4000.bin` (optionally `@ENTRY`), e.g. `name=game@4000@4000.bin`. Addresses are four hex digits, flat 16-bit — no `Bnn:` prefix (its `:` is illegal in a Windows filename). The Qt/imgui **Save binary file** dialog writes names in this same form |
 | anything else | fallback — no signature matched | Treated as a headerless binary: loads only with an address in `name`, else listed in `emu.failed_cmds` |
 
@@ -2469,8 +2593,8 @@ out. A **stale** `keymap.cfg` silently overrides the table — delete it to undo
 | PUT | `/api/breakpoints` | Replace the Z80, BASIC and/or raster breakpoints with the document GET returns |
 | DELETE | `/api/breakpoints` | Clear every breakpoint (Z80, BASIC, raster) |
 | GET | `/api/history` | Last executed Z80 instructions (depth set by `history_size`) |
-| GET | `/api/codemap` | Executed-instruction bitmap (code/data zones) |
-| DELETE | `/api/codemap` | Reset the executed-instruction bitmap + history |
+| GET | `/api/codemap` | Code map per RAM bank / ROM, as a view (code/data zones) |
+| DELETE | `/api/codemap` | Reset the code map of every memory + history |
 | GET | `/api/memmap` | ROM/RAM mapping per 16 KB region + RAM banking config |
 | DELETE | `/api/cartridge` | Eject the cartridge (banks leave the ROM catalog) and hard-reset |
 | GET | `/api/rommap` | ROM catalog: loaded firmware/extension/cartridge-bank ROMs and their sources |
