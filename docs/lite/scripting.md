@@ -218,6 +218,18 @@ snapshot()                   -- save a snapshot (name/directory configurable)
 snapshot_name(name)          -- filename without extension
 ```
 
+`disk_insert`, `tape_insert` and `snapshot_load` return `true` when the file
+loaded. Otherwise they return `false` and the reason as a second value,
+`'<path>': <reason>`, worded like the desktop alert: the file could not be
+read (with the system cause, e.g. *File not found*, *Permission denied*), is
+empty, is not in a format the emulator recognises, or was recognised but could
+not be loaded:
+
+```lua
+local ok, why = disk_insert("game.dsk")
+if not ok then print(why) end
+```
+
 ### Keyboard
 
 ```lua

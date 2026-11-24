@@ -1,7 +1,7 @@
 # AMSpiriT-Lite — Embedded HTTP Debug Server
 
-> **Documented version: AMSpiriT Lite 1.17.8.** Use this version or a newer
-> one — ideally exactly 1.17.8, so the doc matches the binary. If your build
+> **Documented version: AMSpiriT Lite 1.18.1.** Use this version or a newer
+> one — ideally exactly 1.18.1, so the doc matches the binary. If your build
 > differs, treat the running instance as authoritative: query `GET /api/doc`
 > (and `GET /api/doc/<name>`) for the endpoints it actually serves.
 
@@ -289,10 +289,10 @@ One rule per kind of parameter, the same on every endpoint:
 
 - **Booleans** are `true`/`false` in a JSON body, and `true`, `false`, `1` or `0` in a query string. Anything else is a `400`.
 - **Absent means not provided.** There is no "-1 = unused" value: leave the parameter out.
-- **Names are `snake_case`** (`mask_type`, `rw_slots`); only Z80 register names (`PC`, `SP`, …) keep their case.
+- **Names are `snake_case`** (`rw_slots`, `screen_type`); only Z80 register names (`PC`, `SP`, …) keep their case.
 - **A closed vocabulary is named**, not numbered (`"6128+"`, `"CTM644"`, drive `A`/`B`); a `400` lists the accepted values.
 
-Spellings older than these (`maskType`, `over=1`, `paused` in `/api/config`) are still accepted but no longer documented.
+Spellings older than these (`over=1`, `paused` in `/api/config`) are still accepted but no longer documented.
 
 ## Request bodies and errors
 
@@ -1743,9 +1743,9 @@ Returns the current CRT monitor preset, screen type and shader parameters.
   "monitor_cal": "auto",
   "presets": ["Off","CTM644","GT65","TV"],
   "crt": {
-    "curvature": 0.005, "scanline": 0.30, "sharpness": 0.80,
-    "mask_type": 4, "mask_pitch": 3.0, "mask": 0.15,
-    "halation": 0.12, "diffusion": 0.10, "convergence": 0.0,
+    "curvature": 1.0, "scanline": 0.5, "sharpness": 0.5,
+    "mask": 1.0,
+    "halation": 1.0, "diffusion": 1.0, "convergence": 0.4,
     "brightness": 1.0, "persistence": 0.0
   }
 }
@@ -1770,9 +1770,9 @@ subset of the keys may be sent. `crt` is applied as a whole set when present.
 { "monitor": "GT65" }
 { "screen_type": 1 }
 { "monitor_cal": "cm14" }
-{ "crt": { "curvature":0.005, "scanline":0.30, "sharpness":0.80,
-           "mask_type":4, "mask_pitch":3.0, "mask":0.15, "halation":0.12,
-           "diffusion":0.10, "convergence":0.0, "brightness":1.0, "persistence":0.0 } }
+{ "crt": { "curvature":1.0, "scanline":0.5, "sharpness":0.5, "mask":1.0,
+           "halation":1.0, "diffusion":1.0, "convergence":0.4, "brightness":1.0,
+           "persistence":0.0 } }
 ```
 
 `monitor_cal` picks the monitor the CPC is plugged into, which sets the
@@ -1783,9 +1783,25 @@ and `"cm14"` (CPC+ monitor, calibrated for CRTC 3/4) force one monitor: the
 other CRTC family then shows the frame shifted 16 px (CRTC 3/4 on a CTM: left;
 CRTC 0/1/2 on a CM14: right). The full frame is unaffected.
 
-Selecting a `monitor` preset loads that preset's default parameters. Ranges:
-`curvature` 0–0.03, `scanline`/`sharpness`/`mask`(≤0.25)/`halation`/`diffusion`/`persistence` 0–1,
-`mask_type` 0–4, `mask_pitch` ~1–6, `convergence` −2…2, `brightness` 0.1–3.
+Selecting a `monitor` preset loads that preset's default parameters. Every
+monitor runs on one tube model, and the parameters are its sliders: each
+default gives the measured monitor. Ranges and meaning:
+
+| Parameter | Range | Default | Effect |
+|---|---|---|---|
+| `curvature` | 0–2 | 1 | glass bulge times the monitor's; 0 = flat glass, square corners |
+| `scanline` | 0–1 | 0.5 | beam height: 0 doubles it, 1 halves it |
+| `sharpness` | 0–1 | 0.5 | beam width: 0 doubles it, 1 halves it |
+| `mask` | 0–1 | 1 | phosphor mask strength; 0 = no mask |
+| `halation` | 0–2 | 1 | close glow times the monitor's |
+| `diffusion` | 0–2 | 1 | wide glow times the monitor's |
+| `convergence` | −2…2 | CTM644 0.4, others 0 | blue gun offset, in source pixels; no effect on the GT65 (one phosphor) |
+| `brightness` | 0.1–3 | 1 | gain times the monitor's |
+| `persistence` | 0–1 | 0 | phosphor trail; 0 = none |
+
+The monitor sets its own mask: there is no mask type or pitch parameter. The
+keys `mask_type`, `mask_pitch`, `maskType` and `maskPitch` are ignored, not
+refused.
 
 **Response**: `200 application/json` — `{"cmd_seq":N}`
 
@@ -1798,11 +1814,10 @@ highlight, line/statement stepping, breakpoints, run-to, variable hover). They
 rely on the Locomotive BASIC text pointers `0xAE1D` (current line) and `0xAE1B`
 (current statement / execution address).
 
-The CRT shader block takes eleven parameters, all optional and all validated:
-`curvature`, `scanline`, `sharpness`, `mask_pitch`, `mask`, `halation`,
-`diffusion`, `convergence`, `brightness`, `persistence` (numbers) and `mask_type`
-(integer). A non-numeric value is a `400`, not a silent fallback to the default —
-that changed in 1.14.4, see the changelog.
+The CRT shader block takes nine parameters, all optional and all validated:
+`curvature`, `scanline`, `sharpness`, `mask`, `halation`, `diffusion`,
+`convergence`, `brightness` and `persistence` (numbers). A non-numeric value
+is a `400`, not a silent fallback to the default.
 
 ### `GET /api/basic_listing`
 
@@ -2455,7 +2470,10 @@ applied on the main thread at the next loop iteration (`Core_*` calls are not
 safe from the web server's thread). The response confirms the upload was
 queued, not that the load succeeded — wait for `emu.applied_cmd_seq` to reach
 the returned `cmd_seq`, then look for that `cmd_seq` in `emu.failed_cmds`
-(absent = loaded). Two uploads sent back to back both load, in order. Plain
+(absent = loaded). Its `error` gives the reason, as the desktop alert words
+it: *not in a format the emulator recognises* (followed by the formats it
+loads), or *recognised but could not be loaded* (refused by the core: damaged
+or incompatible). Two uploads sent back to back both load, in order. Plain
 text named `.bas` (BASIC source: send it to `POST /api/basic`) or `.csl`/`.lua`
 (send it to `POST /api/script`) is refused with `400` at once.
 
